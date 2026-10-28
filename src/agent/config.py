@@ -7,6 +7,7 @@ Budget tracker with hard limits, and defines ModelSpec with pricing constants.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -31,6 +32,12 @@ class BudgetExceeded(Exception):
 # ---------------------------------------------------------------------------
 
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE_CANDIDATES = [
+    Path.cwd() / ".env",
+    _PROJECT_ROOT / ".env",
+]
+
 class Settings(BaseSettings):
     """Application-wide settings loaded from environment / `.env` file.
 
@@ -38,7 +45,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE_CANDIDATES,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -185,5 +192,23 @@ MODEL_PRICING: dict[str, ModelSpec] = {
         tier="large",
         price_in=2.50,
         price_out=10.00,
+    ),
+    "openai/gpt-oss-20b": ModelSpec(
+        model_id="openai/gpt-oss-20b",
+        tier="small",
+        price_in=0.10,
+        price_out=0.15,
+    ),
+    "openai/gpt-oss-120b": ModelSpec(
+        model_id="openai/gpt-oss-120b",
+        tier="large",
+        price_in=0.40,
+        price_out=0.60,
+    ),
+    "qwen/qwen3.8-27b": ModelSpec(
+        model_id="qwen/qwen3.8-27b",
+        tier="small",
+        price_in=0.15,
+        price_out=0.20,
     ),
 }

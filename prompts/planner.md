@@ -23,6 +23,7 @@ Given a research question, produce a JSON plan with:
 - If the question is ambiguous, set needs_clarification=true, state your assumptions clearly, and proceed.
 - If the question asks for medical/legal advice or illegal content, set task_type="other".
 - Keep sub-questions focused and non-overlapping.
+- Keep each search_query concise (3-6 keywords, e.g. "qdrant vs milvus rag", "open source vector databases"). NEVER concatenate queries with | or OR.
 - Search queries should be specific and likely to find high-quality sources.
 - For comparisons, include a sub-question for EACH entity being compared, plus one for head-to-head analysis.
 

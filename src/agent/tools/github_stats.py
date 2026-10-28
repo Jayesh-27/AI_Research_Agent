@@ -46,8 +46,9 @@ async def github_repo_stats(
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "research-agent/0.1",
     }
-    if settings.GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {settings.GITHUB_TOKEN}"
+    token = (settings.GITHUB_TOKEN or "").strip()
+    if token and not token.startswith("#"):
+        headers["Authorization"] = f"Bearer {token}"
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

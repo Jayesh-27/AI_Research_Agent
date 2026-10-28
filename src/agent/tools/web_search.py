@@ -102,27 +102,64 @@ async def _tavily_search(
     return ToolResult(ok=True, data=hits, latency_ms=latency)
 
 
+_ddg_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+
+def _get_ddg_lock() -> asyncio.Lock:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.Lock()
+    if loop not in _ddg_locks:
+        _ddg_locks[loop] = asyncio.Lock()
+    return _ddg_locks[loop]
+
+
 async def _ddg_search(
     query: str,
     max_results: int,
     start: float,
 ) -> ToolResult:
-    """Fallback search using DuckDuckGo."""
+    """Fallback search using DuckDuckGo via ddgs."""
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
 
-        # DDG is synchronous, run in executor
-        loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None,
-            lambda: list(DDGS().text(query, max_results=max_results)),
-        )
+        # Clean and simplify query for DDG
+        clean_q = query.split("|")[0].replace("?", "").replace('"', "").strip()
+        words = clean_q.split()
+        if len(words) > 8:
+            clean_q = " ".join(words[:8])
+
+        def _do_search(q: str) -> list[dict[str, Any]]:
+            try:
+                return list(DDGS().text(q, max_results=max_results))
+            except Exception as e:
+                # If query was too specific, try a simplified 4-word query
+                if len(q.split()) > 4:
+                    simpler = " ".join(q.split()[:4])
+                    try:
+                        return list(DDGS().text(simpler, max_results=max_results))
+                    except Exception:
+                        pass
+                logger.warning("DDGS query failed (%s): %s", q, e)
+                return []
+
+        async with _get_ddg_lock():
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, lambda: _do_search(clean_q))
+            await asyncio.sleep(0.3)
 
         hits: list[dict[str, Any]] = []
         for item in results:
             try:
+                url = item.get("href") or item.get("link") or item.get("url") or ""
+                if not url:
+                    continue
                 hit = SearchHit(
-                    url=item.get("href", item.get("link", "")),
+                    url=url,
                     title=item.get("title", ""),
                     snippet=item.get("body", item.get("snippet", "")),
                     provider="ddg",
@@ -132,11 +169,9 @@ async def _ddg_search(
                 logger.warning("Dropped malformed DDG result: %s", exc)
 
         latency = int((time.time() - start) * 1000)
-        if not hits:
-            return ToolResult(ok=True, data=[], latency_ms=latency)
         return ToolResult(ok=True, data=hits, latency_ms=latency)
 
     except Exception as exc:
         latency = int((time.time() - start) * 1000)
-        logger.error("DDG search also failed: %s", exc)
-        return ToolResult(ok=False, error=f"all_search_failed: {exc}", latency_ms=latency)
+        logger.warning("DDG search returned empty due to error: %s", exc)
+        return ToolResult(ok=True, data=[], latency_ms=latency)

@@ -94,7 +94,7 @@ def tool_call(
 
                 return result
 
-            except (asyncio.TimeoutError, TimeoutError):
+            except (asyncio.TimeoutError, TimeoutError):  # noqa: UP041
                 latency = int((time.time() - start) * 1000)
                 logger.warning("Tool %s timed out after %.1fs", name, timeout_s)
                 if span:

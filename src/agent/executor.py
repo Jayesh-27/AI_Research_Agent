@@ -40,7 +40,15 @@ async def execute_sub_question(
     async with semaphore:
         logger.info("Executing sub-question [%s]: %s", sub_q.id, sub_q.question)
 
-        queries = sub_q.search_queries if sub_q.search_queries else [sub_q.question]
+        raw_queries = sub_q.search_queries if sub_q.search_queries else [sub_q.question]
+        queries: list[str] = []
+        for rq in raw_queries:
+            if "|" in rq:
+                queries.extend([part.strip() for part in rq.split("|") if part.strip()])
+            else:
+                queries.append(rq.strip())
+        # Cap to top 2 queries per sub-question to avoid search engine rate limits
+        queries = queries[:2]
 
         # 1. Gather search hits across queries
         all_hits: list[SearchHit] = []
@@ -65,7 +73,7 @@ async def execute_sub_question(
             sub_q.question,
             settings=settings,
             budget=budget,
-            top_k=4,
+            top_k=1,
         )
 
         # 3. Fetch pages and extract evidence
@@ -175,7 +183,7 @@ async def execute_plan(
     *,
     settings: Settings,
     budget: Budget,
-    max_concurrency: int = 3,
+    max_concurrency: int = 2,
     chaos_mode: str = "off",
 ) -> None:
     """Run all sub-questions concurrently with bounded concurrency."""

@@ -6,6 +6,7 @@ Temperature 0 everywhere. Every call is Pydantic-validated.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -66,13 +67,29 @@ class ModelRouter:
 # ---------------------------------------------------------------------------
 
 _clients: dict[str, openai.AsyncOpenAI] = {}
+_llm_call_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+
+def _get_call_lock() -> asyncio.Lock:
+    """Return an asyncio.Lock bound to the current running event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.Lock()
+    if loop not in _llm_call_locks:
+        _llm_call_locks[loop] = asyncio.Lock()
+    return _llm_call_locks[loop]
 
 
 def _get_client(base_url: str, api_key: str) -> openai.AsyncOpenAI:
     """Return a cached AsyncOpenAI client for the given base URL."""
     cache_key = f"{base_url}:{api_key[:8]}"
     if cache_key not in _clients:
-        _clients[cache_key] = openai.AsyncOpenAI(base_url=base_url, api_key=api_key)
+        _clients[cache_key] = openai.AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            max_retries=1,
+        )
     return _clients[cache_key]
 
 
@@ -90,7 +107,7 @@ async def call_json(
     settings: Settings,
     budget: Budget | None = None,
     temperature: float = 0,
-    max_tokens: int = 4096,
+    max_tokens: int = 2048,
     span_name: str = "llm_call",
 ) -> T:
     """Call the LLM and return a Pydantic-validated instance of *schema*.
@@ -234,17 +251,20 @@ async def _call_once(
 
     start = time.time()
     try:
-        response = await client.chat.completions.create(
-            model=spec.model_id,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"},
-            timeout=30.0,
-        )
+        async with _get_call_lock():
+            response = await client.chat.completions.create(
+                model=spec.model_id,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+                timeout=30.0,
+            )
+            # Throttle between calls to protect free-tier rate limits
+            await asyncio.sleep(0.5)
 
         raw = response.choices[0].message.content or "{}"
         tokens_in = response.usage.prompt_tokens if response.usage else 0

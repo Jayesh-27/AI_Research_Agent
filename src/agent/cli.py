@@ -31,7 +31,7 @@ app = typer.Typer(
     help="Production-Oriented AI Research Agent CLI (Predixion AI Intern Assignment)",
     add_completion=False,
 )
-console = Console()
+console = Console(legacy_windows=False)
 
 
 @app.command()

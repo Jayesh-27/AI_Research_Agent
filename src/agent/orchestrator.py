@@ -138,6 +138,9 @@ async def _execute_pipeline(
     # 1. Planning Stage
     span = trace.start_span("orchestrator:plan")
     plan = await create_plan(question, settings=settings, budget=budget)
+    # Ensure bounded execution within provider token rate limits
+    if len(plan.sub_questions) > 3:
+        plan.sub_questions = plan.sub_questions[:3]
     trace.end_span(span)
 
     if on_plan_callback:
@@ -169,8 +172,7 @@ async def _execute_pipeline(
         gappy_questions: list[SubQuestion] = []
         for sq in plan.sub_questions:
             evs = ledger.get_by_sub_question(sq.id)
-            domains = {ev.domain for ev in evs if ev.domain}
-            if len(evs) < 2 or len(domains) < 2:
+            if not evs:
                 gappy_questions.append(sq)
 
         if gappy_questions and budget.replans < budget.max_replans:

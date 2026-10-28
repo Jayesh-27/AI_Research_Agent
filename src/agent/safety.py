@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_MAX_UNTRUSTED_LEN: int = 6_000
+_MAX_UNTRUSTED_LEN: int = 3_000
 
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),  # loopback
