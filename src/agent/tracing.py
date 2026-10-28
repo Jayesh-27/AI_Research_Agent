@@ -98,13 +98,16 @@ class Trace:
 _current_trace: contextvars.ContextVar[Trace | None] = contextvars.ContextVar(
     "_current_trace", default=None
 )
+_last_completed_trace: Trace | None = None
 
 
 def get_current_trace() -> Trace | None:
-    """Return the active trace in the current async context."""
-    return _current_trace.get()
+    """Return the active trace in the current async context or the last completed trace."""
+    return _current_trace.get() or _last_completed_trace
 
 
 def set_current_trace(trace: Trace) -> None:
     """Set the active trace in the current async context."""
+    global _last_completed_trace
+    _last_completed_trace = trace
     _current_trace.set(trace)

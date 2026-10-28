@@ -14,6 +14,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -92,7 +93,7 @@ def ask(
     if format.lower() == "json":
         console.print_json(final_answer.model_dump_json(indent=2))
     else:
-        console.print(Panel(md_output, title="Research Agent Report", border_style="blue"))
+        console.print(Panel(Markdown(md_output), title="Research Agent Report", border_style="blue"))
 
     # Show trace if requested
     if show_trace:
