@@ -1,0 +1,28 @@
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+*.egg-info/
+dist/
+build/
+
+# Cache
+.cache/
+*.db
+
+# Runs (traces) — except samples
+runs/
+!samples/
+
+# OS
+.DS_Store
+Thumbs.db
+

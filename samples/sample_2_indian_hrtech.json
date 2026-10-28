@@ -1,0 +1,101 @@
+{
+  "status": "ok",
+  "user_question": "Find 5 Indian B2B SaaS startups in HR tech and summarize their positioning",
+  "short_answer": "Five prominent Indian B2B SaaS startups in the HR tech space are Darwinbox, Keka, greytHR, inFeedo (Amber), and Leena AI. Their market positioning spans full-lifecycle enterprise Human Capital Management (Darwinbox), user-centric mid-market payroll & automation (Keka, greytHR), and AI-driven conversational employee engagement and helpdesk automation (inFeedo, Leena AI).",
+  "key_findings": [
+    {
+      "statement": "Darwinbox positions itself as a mobile-first, enterprise-grade HCM platform for large enterprises across Asia, competing directly with SAP SuccessFactors and Workday with comprehensive hire-to-retire modules.",
+      "evidence_ids": ["e1"]
+    },
+    {
+      "statement": "Keka focuses on mid-sized enterprises, positioning around high-usability employee experience, automated payroll processing, and attendance tracking with minimal implementation friction.",
+      "evidence_ids": ["e2"]
+    },
+    {
+      "statement": "greytHR caters primarily to Indian SMBs with a focus on compliant statutory payroll calculations (PF, ESI, TDS) and cloud-based core HR administration.",
+      "evidence_ids": ["e3"]
+    },
+    {
+      "statement": "inFeedo positions its flagship AI bot 'Amber' as a predictive employee retention and sentiment analytics platform that proactively identifies attrition risks through continuous conversational check-ins.",
+      "evidence_ids": ["e4"]
+    },
+    {
+      "statement": "Leena AI positions itself as an autonomous employee experience platform integrating generative AI and automated service desk resolution across HR, IT, and workplace workflows.",
+      "evidence_ids": ["e5"]
+    }
+  ],
+  "sources": [
+    {
+      "id": "s1",
+      "title": "Darwinbox Enterprise HCM Overview",
+      "url": "https://darwinbox.com",
+      "domain": "darwinbox.com",
+      "used_in": ["Finding 1"]
+    },
+    {
+      "id": "s2",
+      "title": "Keka HR & Payroll Software Platform",
+      "url": "https://keka.com",
+      "domain": "keka.com",
+      "used_in": ["Finding 2"]
+    },
+    {
+      "id": "s3",
+      "title": "greytHR Cloud HR & Payroll Platform",
+      "url": "https://greythr.com",
+      "domain": "greythr.com",
+      "used_in": ["Finding 3"]
+    },
+    {
+      "id": "s4",
+      "title": "inFeedo: Amber Employee Experience AI",
+      "url": "https://infeedo.com",
+      "domain": "infeedo.com",
+      "used_in": ["Finding 4"]
+    },
+    {
+      "id": "s5",
+      "title": "Leena AI WorkAssistant Platform",
+      "url": "https://leena.ai",
+      "domain": "leena.ai",
+      "used_in": ["Finding 5"]
+    }
+  ],
+  "confidence": {
+    "level": "high",
+    "score": 0.820,
+    "rationale": [
+      "Source authority: 0.88 (weight: 30%)",
+      "Sub-question coverage: 0.90 (weight: 25%)",
+      "Quote verification rate: 0.92 (weight: 20%)",
+      "Source consistency: 1.00 (weight: 15%)",
+      "Information freshness: 0.75 (weight: 10%)"
+    ]
+  },
+  "assumptions": [
+    "Selected companies with verified Indian headquarters or founding origins catering to B2B SaaS workflows.",
+    "Evaluated companies with established market presence and verifiable positioning copy."
+  ],
+  "limitations": [
+    "Pricing tiers and exact employee headcount minimums were not consistently documented across public marketing copy."
+  ],
+  "next_steps": [
+    "Filter candidates by current company size to determine whether enterprise solutions (Darwinbox) or mid-market solutions (Keka) best fit deployment scope.",
+    "Request vendor demos focusing on integration with existing ERP and identity providers."
+  ],
+  "stats": {
+    "run_id": "20261028-161042-4f11",
+    "latency_s": 9.15,
+    "llm_calls": 7,
+    "tokens_in": 7120,
+    "tokens_out": 1340,
+    "est_cost_usd": 0.0039,
+    "tool_calls": {
+      "search_calls": 3,
+      "fetch_calls": 5
+    },
+    "retries": 0,
+    "fallbacks_used": [],
+    "warnings": []
+  }
+}
