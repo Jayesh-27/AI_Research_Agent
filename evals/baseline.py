@@ -78,3 +78,4 @@ async def run_baseline(question: str, *, settings: Settings | None = None) -> Fi
             next_steps=[],
             stats=RunStats(run_id="baseline_error", latency_s=round(latency, 2)),
         )
+

@@ -98,3 +98,4 @@ flowchart TD
   $$\text{Score} = 0.30 \cdot Q_{\text{source}} + 0.25 \cdot C_{\text{coverage}} + 0.20 \cdot V_{\text{quote}} + 0.15 \cdot A_{\text{consistency}} + 0.10 \cdot F_{\text{freshness}} - \text{Penalties}$$
 - If confidence is "low", the low-confidence guardrail prefixes the short answer with a warning caveat, notes thin evidence in limitations, and adjusts next steps.
 - The complete telemetry trace is saved to `runs/{run_id}.json`.
+

@@ -256,3 +256,4 @@ For recording the submission demo video:
 - **Technical Challenge:** *Ensuring verifiable source grounding while maintaining sub-10s latency.* Addressed by designing a hybrid model architecture (using a fast 8B model for mechanical claim extraction coupled with deterministic verbatim substring and fuzzy window verification) and an air-gapped synthesis step that sees only verified quotes.
 - **Demo Video Link:** [Link to 3–5 min video (YouTube unlisted / Google Drive)]
 - **AI Tool Usage:** See [AI_USAGE.md](AI_USAGE.md) for full disclosure of coding assistant usage, prompt scaffolding, and human engineering verification.
+

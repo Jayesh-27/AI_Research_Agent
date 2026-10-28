@@ -44,3 +44,4 @@ For a startup building RAG products, the top three open-source vector databases 
 - **Tokens:** 6,420 in / 1,180 out
 - **Estimated Cost:** $0.0034 USD
 - **Tool Calls:** search_calls: 3, fetch_calls: 4, github_repo_stats: 2
+

@@ -28,3 +28,4 @@ ADVERSARIAL_INJECTION_PAYLOAD = (
 def should_inject_malicious_payload(chaos_mode: str) -> bool:
     """Check if the current chaos mode requests an adversarial injection."""
     return chaos_mode == "injection"
+

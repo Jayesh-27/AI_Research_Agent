@@ -90,3 +90,4 @@ To evaluate the architectural decision of routing between Small Language Models 
 - **Calibrated Evals:** Train a logistic regression model on human-reviewed answer quality scores to calibrate the confidence formula against true empirical error rates.
 - **Centralized LLM Gateway:** Deploy LiteLLM Proxy or an internal API gateway to handle cross-provider load balancing, tenant budget quotas, and persistent semantic caching.
 - **Automated Nightly Regression Evals:** Integrate this evaluation harness into GitHub Actions CI/CD to detect model behavior drift across releases.
+

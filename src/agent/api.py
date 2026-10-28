@@ -81,3 +81,4 @@ async def get_run_trace(run_id: str) -> dict:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to read trace file: {exc}",
         ) from exc
+

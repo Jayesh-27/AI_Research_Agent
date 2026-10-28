@@ -81,3 +81,4 @@ def _create_default_plan(question: str) -> Plan:
         success_criteria=["Synthesize information found from web search."],
         needs_clarification=False,
     )
+

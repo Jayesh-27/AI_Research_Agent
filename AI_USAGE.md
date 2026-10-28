@@ -42,3 +42,4 @@ All AI-generated code was subjected to rigorous human inspection, manual debuggi
 4. **Test Suite Execution:** Maintained 100% pass rate across 25 unit and integration tests under `pytest`, and zero violations under `ruff` linting.
 
 Every line of code and architectural decision in this repository is understood, owned, and ready to be explained in depth during technical interviews.
+
