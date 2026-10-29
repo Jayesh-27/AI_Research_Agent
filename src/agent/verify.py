@@ -10,6 +10,8 @@ Ensures:
 from __future__ import annotations
 
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Literal
 
 from agent.diagnostics import get_debug_collector
@@ -111,6 +113,28 @@ def verify_and_construct_final_answer(
     for reason in det_dropped:
         if reason not in limitations:
             limitations.append(reason)
+
+    # 4b. Check for stale date references in assumptions and limitations
+    current_year = datetime.now(timezone.utc).year
+    cutoff_year = current_year - 1
+    quotes_text = " ".join(ev.quote for ev in ledger.all())
+
+    stale_years_found: set[int] = set()
+    for text in assumptions + limitations:
+        for match in re.findall(r"\b(19\d\d|20\d\d)\b", text):
+            year_val = int(match)
+            if year_val < cutoff_year and str(year_val) not in quotes_text:
+                stale_years_found.add(year_val)
+
+    for sy in sorted(stale_years_found):
+        stale_warn = (
+            f"Stale date detected: assumptions/limitations reference {sy} "
+            f"(prior to {cutoff_year}) without direct quote backing."
+        )
+        if stale_warn not in stats.warnings:
+            stats.warnings.append(stale_warn)
+        if stale_warn not in limitations:
+            limitations.append(stale_warn)
 
     if not valid_findings and not sources:
         status: Literal["ok", "partial", "low_confidence", "failed"] = "failed"

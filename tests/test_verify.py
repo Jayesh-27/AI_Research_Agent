@@ -304,3 +304,56 @@ def test_coverage_below_half_forces_partial_status():
     assert final_ans.confidence.level == "low"  # Capped at low because < 0.34
     assert any("Coverage incomplete" in lim and "Q2" in lim and "Q3" in lim for lim in final_ans.limitations)
 
+
+def test_stale_year_in_assumptions_emits_warning():
+    ledger = EvidenceLedger()
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim A",
+        quote="Qdrant vector search is fast in 2026.",
+        url="https://qdrant.tech",
+        title="Qdrant",
+        document_text="Qdrant vector search is fast in 2026.",
+    )
+
+    plan = Plan(
+        task_type=TaskType.survey,
+        interpretation="Survey",
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="Q1",
+                rationale="r1",
+                tools=[ToolName.web_search],
+                search_queries=["q1"],
+            )
+        ],
+    )
+
+    synthesis = SynthesisOutput(
+        short_answer="Findings",
+        key_findings=[
+            KeyFinding(statement="Qdrant is fast in 2026.", evidence_ids=["e1"]),
+        ],
+        assumptions=["Assessment based on ecosystem state as of late 2023"],
+        limitations=[],
+        next_steps=[],
+        self_reported_confidence="high",
+    )
+    stats = RunStats(run_id="test-stale-year")
+
+    final_ans = verify_and_construct_final_answer(
+        question="Test",
+        plan=plan,
+        synthesis=synthesis,
+        ledger=ledger,
+        stats=stats,
+    )
+
+    assert any(
+        "Stale date detected" in w and "2023" in w for w in final_ans.stats.warnings
+    )
+    assert any(
+        "Stale date detected" in lim and "2023" in lim for lim in final_ans.limitations
+    )
+

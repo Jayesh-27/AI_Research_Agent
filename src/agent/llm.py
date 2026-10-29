@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Literal, TypeVar
 
 import openai
@@ -134,10 +135,15 @@ async def call_json(
     router = ModelRouter(settings)
     spec = router.get(tier)
 
+    # Inject current date into system prompt
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_header = f"Today's date: {today_str}\n\n"
+    system_with_date = system if system.startswith("Today's date:") else f"{date_header}{system}"
+
     # Inject schema into system prompt
     json_schema = json.dumps(schema.model_json_schema(), indent=2)
     full_system = (
-        f"{system}\n\n## Output format\n"
+        f"{system_with_date}\n\n## Output format\n"
         f"Return ONLY valid JSON matching this schema:\n```json\n{json_schema}\n```"
     )
 
