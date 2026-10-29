@@ -97,7 +97,7 @@ def _get_client(base_url: str, api_key: str) -> openai.AsyncOpenAI:
         _clients[cache_key] = openai.AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
-            max_retries=1,
+            max_retries=0,
         )
     return _clients[cache_key]
 
@@ -381,6 +381,7 @@ async def _call_once(
         else:
             extra_kwargs["reasoning_effort"] = "low" if spec.tier == "small" else "medium"
 
+    call_timeout = 15.0 if spec.tier == "small" else 30.0
     start = time.time()
     try:
         async with sem:
@@ -394,7 +395,7 @@ async def _call_once(
                     temperature=temperature,
                     max_tokens=max_tokens,
                     response_format={"type": "json_object"},
-                    timeout=30.0,
+                    timeout=call_timeout,
                     **extra_kwargs,
                 )
             except openai.BadRequestError as err:

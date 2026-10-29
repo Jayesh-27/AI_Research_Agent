@@ -229,3 +229,53 @@ async def test_orchestrator_timeout_with_empty_ledger_yields_failed():
         assert result.short_answer != ""
         assert result.stats is not None
         assert not any(w == "" for w in result.stats.warnings)
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_runs_subquestions_concurrently():
+    import time
+
+    from agent.config import Budget, Settings
+    from agent.evidence import EvidenceLedger
+    from agent.executor import execute_plan
+    from agent.schemas import SubQuestion, ToolName
+
+    sub_qs = [
+        SubQuestion(
+            id="sq1",
+            question="Q1",
+            rationale="r1",
+            tools=[ToolName.web_search],
+            search_queries=["q1"],
+        ),
+        SubQuestion(
+            id="sq2",
+            question="Q2",
+            rationale="r2",
+            tools=[ToolName.web_search],
+            search_queries=["q2"],
+        ),
+        SubQuestion(
+            id="sq3",
+            question="Q3",
+            rationale="r3",
+            tools=[ToolName.web_search],
+            search_queries=["q3"],
+        ),
+    ]
+
+    settings = Settings(LLM_API_KEY="test_key")
+    budget = Budget(settings)
+    ledger = EvidenceLedger()
+
+    async def mock_subq(*args, **kwargs):
+        await asyncio.sleep(0.1)
+
+    with patch("agent.executor.execute_sub_question", side_effect=mock_subq):
+        t0 = time.time()
+        await execute_plan(sub_qs, ledger, settings=settings, budget=budget, max_concurrency=3)
+        duration = time.time() - t0
+
+    # With concurrency 3, all 3 run in parallel taking ~0.1s (well under 0.25s)
+    assert duration < 0.25
+

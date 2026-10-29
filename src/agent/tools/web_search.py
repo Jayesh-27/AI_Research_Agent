@@ -178,9 +178,11 @@ def _do_ddg_search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
     if len(words) > 8:
         initial_q = " ".join(words[:8])
 
-    # 1. Primary attempt: auto backend
+    # 1. Primary attempt: auto backend with timeout
     try:
-        results = list(DDGS().text(initial_q, max_results=max_results, backend="auto") or [])
+        results = list(
+            DDGS(timeout=6).text(initial_q, max_results=max_results, backend="auto") or []
+        )
         if results:
             return results
         logger.info(
@@ -200,9 +202,9 @@ def _do_ddg_search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
     if not simpler_q:
         return []
 
-    # Alternative backends across ddgs / duckduckgo_search versions
+    # Alternative backends across ddgs / duckduckgo_search versions (cap to at most 2 backends)
     try:
-        ddgs_inst = DDGS()
+        ddgs_inst = DDGS(timeout=6)
         if hasattr(ddgs_inst, "_get_engines"):
             engines = [
                 e.__class__.__name__.lower()
@@ -217,9 +219,12 @@ def _do_ddg_search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
     if not retry_backends:
         retry_backends = ["duckduckgo"]
 
-    for b in retry_backends:
+    # Limit to top 2 retry backends to avoid excessive latency on rate-limits
+    for b in retry_backends[:2]:
         try:
-            results = list(DDGS().text(simpler_q, max_results=max_results, backend=b) or [])
+            results = list(
+                DDGS(timeout=6).text(simpler_q, max_results=max_results, backend=b) or []
+            )
             if results:
                 return results
             logger.info("DDGS %s backend returned empty for query '%s'", b, simpler_q)

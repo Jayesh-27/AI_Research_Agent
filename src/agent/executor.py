@@ -19,6 +19,7 @@ from agent.evidence import EvidenceLedger, extract_evidence_from_page
 from agent.filtering import filter_and_rank_hits
 from agent.safety import scan_untrusted
 from agent.schemas import SearchHit, SubQuestion, ToolName
+from agent.tools.base import ToolResult
 from agent.tools.fetch_page import fetch_page
 from agent.tools.github_stats import github_repo_stats
 from agent.tools.web_search import web_search
@@ -154,17 +155,21 @@ async def execute_sub_question(
         # Cap to top 2 queries per sub-question to avoid search engine rate limits
         queries = queries[:2]
 
-        # 1. Gather search hits across queries
+        # 1. Gather search hits across queries concurrently
         all_hits: list[SearchHit] = []
-        for q in queries:
-            tool_res = await web_search(
+        search_tasks = [
+            web_search(
                 q,
                 max_results=6,
                 settings=settings,
                 budget=budget,
                 chaos_mode=chaos_mode,
             )
-            if tool_res.ok and isinstance(tool_res.data, list):
+            for q in queries
+        ]
+        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        for tool_res in search_results:
+            if isinstance(tool_res, ToolResult) and tool_res.ok and isinstance(tool_res.data, list):
                 for item in tool_res.data:
                     try:
                         all_hits.append(SearchHit.model_validate(item))
@@ -177,7 +182,7 @@ async def execute_sub_question(
             sub_q.question,
             settings=settings,
             budget=budget,
-            top_k=1,
+            top_k=2,
         )
 
         collector = get_debug_collector()
@@ -198,14 +203,22 @@ async def execute_sub_question(
                 ],
             )
 
-        # 3. Fetch pages and extract evidence
-        for hit in filtered_hits:
-            fetch_res = await fetch_page(
+        # 3. Fetch pages concurrently and extract evidence
+        fetch_tasks = [
+            fetch_page(
                 hit.url,
                 settings=settings,
                 budget=budget,
                 chaos_mode=chaos_mode,
             )
+            for hit in filtered_hits
+        ]
+        fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+        for hit, fetch_res in zip(filtered_hits, fetch_results):
+            if isinstance(fetch_res, Exception):
+                logger.info("Failed to fetch %s: %s", hit.url, fetch_res)
+                continue
             if collector:
                 collector.record_page_fetch(
                     sq_id=sub_q.id,
@@ -359,7 +372,7 @@ async def execute_plan(
     *,
     settings: Settings,
     budget: Budget,
-    max_concurrency: int = 2,
+    max_concurrency: int = 3,
     chaos_mode: str = "off",
 ) -> None:
     """Run all sub-questions concurrently with bounded concurrency."""
