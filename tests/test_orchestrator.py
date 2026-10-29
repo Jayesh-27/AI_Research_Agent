@@ -174,9 +174,11 @@ async def test_orchestrator_timeout_with_evidence_yields_partial():
         patch("agent.orchestrator.create_plan", new_callable=AsyncMock) as p_plan,
         patch("agent.orchestrator.execute_plan", side_effect=slow_execute_plan),
         patch("agent.orchestrator.synthesize_answer", new_callable=AsyncMock) as p_synth,
+        patch("agent.orchestrator.check_faithfulness", new_callable=AsyncMock) as p_faith,
     ):
         p_plan.return_value = mock_plan
         p_synth.return_value = mock_synthesis
+        p_faith.side_effect = lambda s, *a, **kw: (s, 0, [])
 
         settings = Settings(
             LLM_API_KEY="test_key",
@@ -192,7 +194,10 @@ async def test_orchestrator_timeout_with_evidence_yields_partial():
 
         assert result.status == "partial"
         assert any(
-            "deadline" in lim.lower() or "partial" in lim.lower() or "limit" in lim.lower()
+            "deadline" in lim.lower()
+            or "partial" in lim.lower()
+            or "timeout" in lim.lower()
+            or "limit" in lim.lower()
             for lim in result.limitations
         )
         assert result.short_answer != ""

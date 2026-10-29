@@ -14,6 +14,7 @@ from typing import Literal
 
 from agent.diagnostics import get_debug_collector
 from agent.evidence import EvidenceLedger
+from agent.faithfulness import filter_unsupported_findings_deterministic
 from agent.filtering import calculate_domain_score
 from agent.schemas import (
     Confidence,
@@ -54,6 +55,11 @@ def verify_and_construct_final_answer(
                 idx,
                 finding.statement[:50],
             )
+
+    # 1b. Deterministic faithfulness check (drop speculative hedge words & unbacked licenses)
+    valid_findings, det_dropped = filter_unsupported_findings_deterministic(
+        valid_findings, ledger
+    )
 
     # 2. Build deterministic Sources list from cited evidence only
     sources_by_url: dict[str, Source] = {}
@@ -101,6 +107,10 @@ def verify_and_construct_final_answer(
         clean_w = str(warning).strip()
         if clean_w and clean_w not in limitations:
             limitations.append(clean_w)
+
+    for reason in det_dropped:
+        if reason not in limitations:
+            limitations.append(reason)
 
     if not valid_findings and not sources:
         status: Literal["ok", "partial", "low_confidence", "failed"] = "failed"

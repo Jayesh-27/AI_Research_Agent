@@ -23,6 +23,7 @@ from agent.config import Budget, BudgetExceeded, Settings
 from agent.diagnostics import get_debug_collector
 from agent.evidence import EvidenceLedger
 from agent.executor import execute_plan, execute_sub_question
+from agent.faithfulness import check_faithfulness
 from agent.planner import create_plan
 from agent.schemas import (
     Confidence,
@@ -343,6 +344,17 @@ async def _synthesize_and_verify(state: RunState) -> FinalAnswer:
         settings=state.settings,
         budget=state.budget,
     )
+    if state.settings.ENABLE_FAITHFULNESS_CHECK and synthesis_output.key_findings:
+        synthesis_output, dropped_count, notes = await check_faithfulness(
+            synthesis_output,
+            state.ledger,
+            settings=state.settings,
+            budget=state.budget,
+        )
+        if dropped_count > 0:
+            state.warnings.append(
+                f"{dropped_count} unsupported finding(s) dropped during faithfulness check."
+            )
     state.trace.end_span(span)
     if collector:
         collector.record_stage_timing(

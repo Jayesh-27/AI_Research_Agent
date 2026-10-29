@@ -100,6 +100,7 @@ class Settings(BaseSettings):
 
     # --- Feature flags ---
     ENABLE_JUDGE: bool = False
+    ENABLE_FAITHFULNESS_CHECK: bool = True
     CHAOS_MODE: str = "off"  # off | search_down | timeout | malformed | injection | empty
     AGENT_DEBUG: bool = False
 

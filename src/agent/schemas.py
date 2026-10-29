@@ -367,6 +367,21 @@ class InjectionCheckResult(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class FindingVerdict(BaseModel):
+    """Evaluation of whether a single finding is faithful to cited evidence."""
+
+    statement: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    verdict: Literal["supported", "partially_supported", "unsupported"]
+    reason: str = ""
+
+
+class FaithfulnessCheckResult(BaseModel):
+    """Result of batched faithfulness check across key findings."""
+
+    verdicts: list[FindingVerdict] = Field(default_factory=list)
+
+
 class JudgeResult(BaseModel):
     """LLM-as-judge evaluation result."""
 
