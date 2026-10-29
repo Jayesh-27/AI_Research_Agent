@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from agent.config import Budget, Settings
+from agent.executor import filter_and_rank_github_candidates
 from agent.tools.base import ToolResult, tool_call
 from agent.tools.fetch_page import fetch_page
 from agent.tools.github_stats import github_repo_stats
@@ -53,3 +54,30 @@ async def test_web_search_chaos_empty():
     res = await web_search("query", settings=settings, budget=budget, chaos_mode="empty")
     assert res.ok is True
     assert res.data == []
+
+
+def test_github_candidate_selection_filters_junk_and_ranks():
+    candidates = [
+        "qdrant/qdrant-stars-handbook",
+        "awesome-vectors/awesome-rag",
+        "developer/my-tutorial",
+        "qdrant/qdrant",
+        "milvus-io/milvus",
+        "random/unrelated-project",
+    ]
+    query = "Compare Qdrant vs Milvus on GitHub adoption"
+    chosen, rejected = filter_and_rank_github_candidates(candidates, query)
+
+    # Chosen must prioritize the exact match and entity repos
+    assert "qdrant/qdrant" in chosen
+    assert "milvus-io/milvus" in chosen
+    assert "qdrant/qdrant-stars-handbook" not in chosen
+    assert "awesome-vectors/awesome-rag" not in chosen
+    assert "developer/my-tutorial" not in chosen
+
+    # Check rejection reasons
+    reasons = {r["repo"]: r["reason"] for r in rejected}
+    assert reasons["qdrant/qdrant-stars-handbook"] == "contains_junk_keyword"
+    assert reasons["awesome-vectors/awesome-rag"] == "contains_junk_keyword"
+    assert reasons["developer/my-tutorial"] == "contains_junk_keyword"
+    assert reasons["random/unrelated-project"] == "no_entity_token_match"

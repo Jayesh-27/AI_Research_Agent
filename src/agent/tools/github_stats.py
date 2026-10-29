@@ -76,6 +76,7 @@ async def github_repo_stats(
             "license": (data.get("license") or {}).get("spdx_id", "Unknown"),
             "pushed_at": data.get("pushed_at", ""),
             "archived": data.get("archived", False),
+            "fork": data.get("fork", False),
             "description": data.get("description", ""),
             "url": f"https://github.com/{repo}",
         }

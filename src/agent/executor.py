@@ -27,6 +27,109 @@ logger = logging.getLogger(__name__)
 
 _GITHUB_URL_PATTERN = re.compile(r"github\.com/([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)")
 
+_JUNK_REPO_PATTERN = re.compile(
+    r"(handbook|awesome|examples?|demo|tutorial|workshop|course|stars|cookbook|benchmark|docs?)",
+    re.IGNORECASE,
+)
+_GITHUB_STOP_WORDS = {
+    "github",
+    "repo",
+    "repository",
+    "stats",
+    "stars",
+    "forks",
+    "recent",
+    "activity",
+    "commits",
+    "issues",
+    "what",
+    "where",
+    "which",
+    "with",
+    "metrics",
+    "adoption",
+    "community",
+    "open",
+    "source",
+    "vector",
+    "database",
+    "databases",
+    "candidate",
+    "candidates",
+    "each",
+    "compare",
+    "comparison",
+    "analysis",
+}
+
+
+def filter_and_rank_github_candidates(
+    raw_candidates: list[str],
+    query_text: str,
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Extract owner/name, filter out junk/tutorial repos, and rank by entity match confidence."""
+    # Extract entity tokens from query_text (words of >=3 chars not in stop words)
+    words = re.findall(r"\b[a-zA-Z0-9_-]{3,}\b", query_text.lower())
+    entity_tokens = [w for w in words if w not in _GITHUB_STOP_WORDS]
+
+    valid_candidates: list[tuple[int, str]] = []
+    rejected: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for cand in raw_candidates:
+        cand_clean = cand.strip().removesuffix(".git").strip("/")
+        if not cand_clean or cand_clean.lower() in seen:
+            continue
+        seen.add(cand_clean.lower())
+
+        parts = cand_clean.split("/")
+        if len(parts) != 2:
+            rejected.append({"repo": cand_clean, "reason": "invalid_repo_format"})
+            continue
+
+        owner, name = parts[0].lower(), parts[1].lower()
+        if owner in (
+            "features",
+            "topics",
+            "collections",
+            "trending",
+            "site",
+            "orgs",
+            "blog",
+            "pricing",
+            "about",
+            "search",
+        ):
+            rejected.append({"repo": cand_clean, "reason": "not_a_user_repo"})
+            continue
+
+        # Reject names containing junk keywords
+        if _JUNK_REPO_PATTERN.search(name):
+            rejected.append({"repo": cand_clean, "reason": "contains_junk_keyword"})
+            continue
+
+        # Score relevance against entity tokens
+        # Priority 0: repo name exactly matches an entity token (e.g. qdrant/qdrant -> 'qdrant')
+        # Priority 1: repo name or owner contains entity token (e.g. milvus-io/milvus -> 'milvus')
+        # Priority 2: candidate without explicit entity token
+        priority = 2
+        if entity_tokens:
+            if any(name == tok for tok in entity_tokens):
+                priority = 0
+            elif any(tok in name or tok in owner for tok in entity_tokens):
+                priority = 1
+            else:
+                # If specific entity targets were in the query and this repo matches none of them, reject!
+                rejected.append({"repo": cand_clean, "reason": "no_entity_token_match"})
+                continue
+
+        valid_candidates.append((priority, cand_clean))
+
+    # Sort by priority (0 first, then 1, then 2)
+    valid_candidates.sort(key=lambda x: x[0])
+    chosen = [c for _, c in valid_candidates]
+    return chosen, rejected
+
 
 async def execute_sub_question(
     sub_q: SubQuestion,
@@ -183,7 +286,7 @@ async def _execute_github_stats_if_present(
     for h in hits:
         m = _GITHUB_URL_PATTERN.search(h.url)
         if m:
-            repo_path = m.group(1).rstrip(".git").strip("/")
+            repo_path = m.group(1).removesuffix(".git").strip("/")
             # Ignore general pages like github.com/features or github.com/topics
             parts = repo_path.split("/")
             if len(parts) == 2 and parts[0] not in (
@@ -196,19 +299,34 @@ async def _execute_github_stats_if_present(
 
     # Also search sub_q question text
     for m in _GITHUB_URL_PATTERN.finditer(sub_q.question):
-        repos_found.add(m.group(1).rstrip(".git").strip("/"))
+        repos_found.add(m.group(1).removesuffix(".git").strip("/"))
 
     collector = get_debug_collector()
     candidate_list = list(repos_found)
-    chosen_repos: list[str] = []
-    rejected_repos: list[dict[str, str]] = []
 
-    # Limit to top 3 repos per sub-question
-    for repo in candidate_list[:3]:
+    # Filter junk repos and rank according to sub_question / query entity matches
+    query_context = f"{sub_q.question} {' '.join(sub_q.search_queries)}"
+    ranked_candidates, filter_rejected = filter_and_rank_github_candidates(
+        candidate_list, query_context
+    )
+
+    chosen_repos: list[str] = []
+    rejected_repos: list[dict[str, str]] = list(filter_rejected)
+
+    # Limit to top 3 confident repos per sub-question
+    for repo in ranked_candidates[:3]:
         res = await github_repo_stats(repo, settings=settings, budget=budget)
         if res.ok and isinstance(res.data, dict):
-            chosen_repos.append(repo)
             d = res.data
+            # Reject forks and archived repositories
+            if d.get("archived"):
+                rejected_repos.append({"repo": repo, "reason": "is_archived_repo"})
+                continue
+            if d.get("fork"):
+                rejected_repos.append({"repo": repo, "reason": "is_fork_repo"})
+                continue
+
+            chosen_repos.append(repo)
             summary = (
                 f"Repository {repo}: {d.get('stars', 0):,} stars, "
                 f"{d.get('forks', 0):,} forks, {d.get('open_issues', 0):,} open issues, "
@@ -224,7 +342,7 @@ async def _execute_github_stats_if_present(
         else:
             rejected_repos.append({"repo": repo, "reason": res.error or "fetch_failed"})
 
-    for repo in candidate_list[3:]:
+    for repo in ranked_candidates[3:]:
         rejected_repos.append({"repo": repo, "reason": "exceeded_max_repo_candidates_cap"})
 
     if collector:
