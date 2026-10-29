@@ -195,40 +195,28 @@ def _do_ddg_search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
             exc,
         )
 
-    # 2. Retry with simplified query (<= 6 words, stripped operators) and html backend
+    # 2. Retry with simplified query (<= 6 words, stripped operators) and alternative backends
     simpler_q = simplify_query_for_search(query, max_words=6)
     if not simpler_q:
         return []
 
-    try:
-        results = list(DDGS().text(simpler_q, max_results=max_results, backend="html") or [])
-        if results:
-            return results
-        logger.info(
-            "DDGS html backend returned empty for query '%s'; trying lite backend",
-            simpler_q,
-        )
-    except (RatelimitException, TimeoutException, DDGSException, Exception) as exc:
-        logger.warning(
-            "DDGS html backend failed for '%s' (%s: %s); trying lite backend",
-            simpler_q,
-            type(exc).__name__,
-            exc,
-        )
+    # Alternative backends across ddgs / duckduckgo_search versions
+    retry_backends = ["duckduckgo", "html", "lite", "brave"]
 
-    # 3. Final fallback: lite backend
-    try:
-        results = list(DDGS().text(simpler_q, max_results=max_results, backend="lite") or [])
-        if results:
-            return results
-        logger.warning("DDGS lite backend returned empty for query '%s'", simpler_q)
-    except (RatelimitException, TimeoutException, DDGSException, Exception) as exc:
-        logger.warning(
-            "DDGS lite backend failed for '%s' (%s: %s)",
-            simpler_q,
-            type(exc).__name__,
-            exc,
-        )
+    for b in retry_backends:
+        try:
+            results = list(DDGS().text(simpler_q, max_results=max_results, backend=b) or [])
+            if results:
+                return results
+            logger.info("DDGS %s backend returned empty for query '%s'", b, simpler_q)
+        except (RatelimitException, TimeoutException, DDGSException, Exception) as exc:
+            logger.warning(
+                "DDGS %s backend failed for '%s' (%s: %s)",
+                b,
+                simpler_q,
+                type(exc).__name__,
+                exc,
+            )
 
     return []
 

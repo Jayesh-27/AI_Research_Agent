@@ -48,6 +48,12 @@ def ask(
     save: str | None = typer.Option(
         None, "--save", "-s", help="Directory to save .md and .json results"
     ),
+    force_save: bool = typer.Option(
+        False, "--force-save", help="Save failed runs to target directory instead of runs/failed"
+    ),
+    routing: str = typer.Option(
+        "hybrid", "--routing", help="Model routing strategy: 'hybrid' or 'all-large'"
+    ),
     chaos: str = typer.Option(
         "off",
         "--chaos",
@@ -69,6 +75,8 @@ def ask(
         logging.getLogger("agent").setLevel(logging.INFO)
 
     settings = Settings()
+    if routing == "all-large" or settings.ROUTING == "all-large":
+        settings.SMALL_MODEL = settings.LARGE_MODEL
     is_debug = debug or settings.AGENT_DEBUG or os.environ.get("AGENT_DEBUG") == "1"
     debug_collector = None
     if is_debug:
@@ -145,7 +153,13 @@ def ask(
 
     # Save to disk if requested
     if save:
-        out_dir = Path(save)
+        if final_answer.status == "failed" and not force_save:
+            out_dir = Path("runs/failed")
+            console.print(
+                f"[bold yellow]Run status is 'failed'. Writing outputs to {out_dir} instead of '{save}' (pass --force-save to override).[/bold yellow]"
+            )
+        else:
+            out_dir = Path(save)
         out_dir.mkdir(parents=True, exist_ok=True)
         safe_name = "".join(c if c.isalnum() else "_" for c in question[:30]).strip("_")
         run_id = final_answer.stats.run_id if final_answer.stats else "out"

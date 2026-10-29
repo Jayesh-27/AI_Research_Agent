@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     SMALL_MODEL: str = "llama-3.1-8b-instant"
     LARGE_MODEL: str = "llama-3.3-70b-versatile"
+    ROUTING: Literal["hybrid", "all-large"] = "hybrid"
 
     # --- LLM provider (fallback, all optional) ---
     FALLBACK_LLM_BASE_URL: str | None = None
