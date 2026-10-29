@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 25 Passed](https://img.shields.io/badge/tests-25%20passed-brightgreen.svg)]()
+[![Tests: 46 Passed](https://img.shields.io/badge/tests-46%20passed-brightgreen.svg)]()
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 An observable, auditable, and production-minded agentic research engine built for the **Platform Engineering Internship assignment at Predixion AI**. The system decomposes open-ended research queries, orchestrates tools (web search, SSRF-guarded page extraction, and GitHub statistics), verifies all citations verbatim against source documents, enforces strict security boundaries against prompt injection, and reports deterministic confidence and operational telemetry.
@@ -15,8 +15,8 @@ Get running in less than 5 minutes:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/research-agent.git
-cd research-agent
+git clone https://github.com/Jayesh-27/AI_Research_Agent.git
+cd AI_Research_Agent
 
 # 2. Install dependencies (in your active virtual environment)
 pip install -e ".[dev]"
@@ -76,14 +76,14 @@ flowchart TD
 ```
 
 ### Stage-by-Stage Breakdown
-1. **Planning (`planner.py`):** Uses a LARGE model (`llama-3.3-70b-versatile`) to classify the task, establish assumptions, and decompose the query into 2–5 sub-questions with per-question tool assignments.
-2. **Search & Tool Execution (`executor.py`):** Runs sub-questions concurrently under bounded concurrency. Gathers search hits via Tavily (with automatic DuckDuckGo fallback).
-3. **Filtering & Ranking (`filtering.py`):** Canonicalizes URLs, caps domain repetition (max 2 per domain), scores domain authority, and uses a SMALL model (`llama-3.1-8b-instant`) to score relevance ($0–3$), ranking hits by $0.6 \cdot (\text{relevance}/3) + 0.4 \cdot \text{domain\_score}$.
+1. **Planning (`planner.py`):** Uses a LARGE model (e.g. `openai/gpt-oss-120b` or `llama-3.3-70b-versatile`) to classify the task, establish assumptions, and decompose the query into 2–5 sub-questions with per-question tool assignments.
+2. **Search & Tool Execution (`executor.py`):** Runs sub-questions concurrently under bounded concurrency (`LLM_CONCURRENCY`). Gathers search hits via Tavily (with automatic DuckDuckGo fallback).
+3. **Filtering & Ranking (`filtering.py`):** Canonicalizes URLs, caps domain repetition (max 2 per domain), scores domain authority, and uses a SMALL model (e.g. `openai/gpt-oss-20b` or `llama-3.1-8b-instant`) to score relevance ($0–3$), ranking hits by $0.6 \cdot (\text{relevance}/3) + 0.4 \cdot \text{domain\_score}$.
 4. **Safety & Content Isolation (`safety.py`):** Enforces an SSRF guard blocking private/loopback/cloud metadata IP ranges. Scrapes main text, wraps it in `<untrusted_document>` tags, and evaluates it with a weighted prompt-injection regex scanner.
 5. **Verbatim Evidence Ledger (`evidence.py`):** The SMALL model extracts claim-quote pairs. A deterministic verification algorithm verifies that each quote exists verbatim in the document. Unverified quotes are dropped.
-6. **Reflection & Replan (`orchestrator.py`):** Checks if any sub-question is gappy ($<2$ evidence items or $<2$ distinct domains). Triggers a bounded replan pass if budget remains.
+6. **Reflection & Replan (`orchestrator.py`):** Checks if any sub-question is gappy ($<2$ evidence items or $<2$ distinct domains). Triggers a bounded replan pass if budget remains and remaining time $\ge 25$s.
 7. **Synthesis (`synthesis.py`):** The LARGE model generates the report seeing **only** the verified evidence ledger and plan context (never raw web pages).
-8. **Verification & Guardrails (`verify.py`):** Discards any finding with invalid evidence IDs, deterministically reconstructs source URLs from cited quotes, computes mathematical confidence, and applies low-confidence guardrails.
+8. **Verification & Guardrails (`verify.py` & `faithfulness.py`):** Validates citations, runs multi-layer faithfulness auditing (synthesizer rules, LLM claim verification against cited quotes, and deterministic hedge/license token checks), computes mathematical confidence, and applies low-confidence guardrails.
 
 ---
 
@@ -112,7 +112,7 @@ We chose a **bounded Planner-Executor state machine**:
 | **Prompt Injection in Web Page** | Weighted regex scanner | Quarantines page, tags evidence as `trust="low"` | `limitations: ["Security quarantine active"]` |
 | **Fabricated Evidence Quote** | Deterministic substring / fuzzy match | Drops claim from ledger completely | Increments `unverified_dropped_count` |
 | **Zero Evidence Retrieved** | Evidence ledger empty | Halts synthesis, returns polite failure status | `status: "failed"`, `confidence: "low"` |
-| **Exceeded Budget / Timeout** | Mutable `Budget` tracker / global timeout | Synthesizes immediately from existing ledger | `status: "partial"`, limitation flagged |
+| **Exceeded Budget / Timeout** | Two-deadline architecture (75s soft deadline + 30s synthesis under 120s global cap) | Synthesizes immediately from existing ledger; returns status="partial" with timeout limitation, or status="failed" if ledger empty | `status: "partial"` (or `"failed"`), specific limitation |
 
 ### 4. How do you reduce hallucinations?
 1. **Air-gapped Synthesis:** The synthesizer prompt sees **only** the verified evidence ledger (`[e1] claim - quote`), never raw web pages or unvetted text.
@@ -137,7 +137,7 @@ We chose a **bounded Planner-Executor state machine**:
 
 ### 7. What were your key tradeoffs?
 - **Custom State Machine vs. LangGraph/CrewAI:** Chose a hand-rolled, deterministic state machine. *Tradeoff:* Requires writing manual orchestration code, but yields total observability, zero framework bloat, clear debugging, and complete architectural transparency.
-- **Hybrid SLM+LLM vs. All-Large:** Used an 8B model for extraction/filtering and a 70B model for planning/synthesis. *Tradeoff:* Reduced latency by 49% and costs by 73%, while relying on deterministic quote verification to catch minor SLM extraction errors.
+- **Hybrid SLM+LLM vs. All-Large:** Used a smaller reasoning model (e.g. `openai/gpt-oss-20b`) for extraction/filtering and a larger reasoning model (e.g. `openai/gpt-oss-120b`) for planning/synthesis. *Tradeoff:* Reduces latency and costs compared to an all-large architecture while relying on deterministic verbatim quote verification and LLM faithfulness auditing to catch minor extraction variations.
 - **Trafilatura Text Extraction vs. Headless Browser:** Used `httpx` + `trafilatura` instead of Selenium/Playwright. *Tradeoff:* Orders of magnitude faster and memory-efficient with a tiny attack surface, at the expense of missing client-rendered React SPAs.
 - **Strict Verbatim Matching vs. Semantic Matching:** Enforced verbatim string verification for quotes. *Tradeoff:* Occasionally discards a valid paraphrased quote, but guarantees zero hallucinations reach the synthesis phase.
 
@@ -213,14 +213,16 @@ research-agent/
 │       ├── web_search.py     # Tavily REST API with DuckDuckGo fallback
 │       ├── fetch_page.py     # httpx + trafilatura with SSRF protection
 │       └── github_stats.py   # GitHub REST API repository metadata
-├── tests/                    # 25 automated unit and integration tests
+├── tests/                    # 46 automated unit and integration tests
 │   ├── fixtures/             # HTML test fixtures including malicious payloads
 │   ├── test_schemas.py
 │   ├── test_safety.py
 │   ├── test_evidence.py
 │   ├── test_verify.py
+│   ├── test_faithfulness.py
 │   ├── test_tools.py
-│   └── test_orchestrator.py
+│   ├── test_orchestrator.py
+│   └── test_cli.py
 ├── evals/                    # Evaluation benchmark suite
 │   ├── queries.yaml          # 10 benchmark evaluation queries
 │   ├── baseline.py           # Single-call non-agentic baseline
@@ -232,7 +234,8 @@ research-agent/
     ├── sample_2_indian_hrtech.md
     ├── sample_2_indian_hrtech.json
     ├── sample_3_adversarial_injection.md
-    └── sample_3_adversarial_injection.json
+    ├── sample_3_adversarial_injection.json
+    └── README.md
 ```
 
 ---
@@ -245,15 +248,15 @@ For recording the submission demo video:
 3. **Resilience & Chaos Mode (2:15–3:30):** 
    - Run with `--chaos injection` to show the prompt injection scanner detecting and quarantining poisoned web pages without compromising the report.
    - Run with `--chaos search_down` to show smooth failover from Tavily to DuckDuckGo.
-4. **Baseline & Evals Comparison (3:30–4:30):** Show `EVALUATION.md` comparing the agent against the hallucinating baseline and presenting the 49% latency / 73% cost savings of the Hybrid SLM+LLM routing policy.
+4. **Baseline & Evals Comparison (3:30–4:30):** Show `EVALUATION.md` comparing the agent against the hallucinating baseline and presenting the latency and cost savings of the Hybrid SLM+LLM routing policy.
 
 ---
 
 ## Submission Form Field Reference
 
-- **GitHub Repository Link:** [Link to completed repository]
+- **GitHub Repository Link:** https://github.com/Jayesh-27/AI_Research_Agent
 - **README Included:** Yes (contains setup, approach, architecture, tradeoffs, and limitations)
-- **Technical Challenge:** *Ensuring verifiable source grounding while maintaining sub-10s latency.* Addressed by designing a hybrid model architecture (using a fast 8B model for mechanical claim extraction coupled with deterministic verbatim substring and fuzzy window verification) and an air-gapped synthesis step that sees only verified quotes.
+- **Technical Challenge:** *Ensuring verifiable source grounding while handling web scraping throttles and reasoning-model token budgets.* Addressed by designing a hybrid model architecture with bounded reasoning effort, per-step token caps, a two-deadline soft timeout pattern, deterministic verbatim quote verification, and LLM faithfulness auditing.
 - **Demo Video Link:** [Link to 3–5 min video (YouTube unlisted / Google Drive)]
 - **AI Tool Usage:** See [AI_USAGE.md](AI_USAGE.md) for full disclosure of coding assistant usage, prompt scaffolding, and human engineering verification.
 
