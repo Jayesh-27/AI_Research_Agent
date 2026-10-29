@@ -18,7 +18,7 @@ from pydantic import BaseModel, ValidationError
 from tenacity import (
     RetryCallState,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     stop_after_delay,
 )
@@ -179,6 +179,51 @@ def _before_sleep_callback(retry_state: RetryCallState) -> None:
         telemetry["backoff_sleeps"].append(sleep_s)
 
 
+def is_groq_daily_token_limit(exc: BaseException) -> bool:
+    """Detect if an exception is a Groq 429 daily token limit error."""
+    text_parts = [str(exc)]
+    if hasattr(exc, "message"):
+        text_parts.append(str(getattr(exc, "message")))
+    if hasattr(exc, "body") and isinstance(getattr(exc, "body"), dict):
+        text_parts.append(str(getattr(exc, "body")))
+    full_text = " ".join(text_parts).lower()
+
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None and hasattr(exc, "response") and exc.response is not None:
+        status_code = getattr(exc.response, "status_code", None)
+
+    is_429 = (
+        isinstance(exc, (openai.RateLimitError, openai.APIStatusError))
+        or status_code == 429
+        or "429" in full_text
+        or "rate limit" in full_text
+    )
+    has_daily_tpd = any(
+        kw in full_text
+        for kw in (
+            "tokens per day",
+            "tpd",
+            "tokens_per_day",
+            "per day",
+            "daily quota",
+            "daily limit",
+        )
+    )
+    return is_429 and has_daily_tpd
+
+
+def _should_retry_llm_call(exc: BaseException) -> bool:
+    """Retry on transient 429/5xx errors, but never retry Groq tokens-per-day daily limit errors."""
+    if is_groq_daily_token_limit(exc):
+        logger.warning(
+            "Groq daily token limit (TPD) 429 detected: aborting retries immediately."
+        )
+        return False
+    return isinstance(
+        exc, (openai.RateLimitError, openai.APIStatusError, openai.APITimeoutError)
+    )
+
+
 async def _call_with_retry_and_fallback(
     *,
     spec: ModelSpec,
@@ -209,7 +254,18 @@ async def _call_with_retry_and_fallback(
             span_name=span_name,
             call_telemetry=call_telemetry,
         )
-    except (openai.RateLimitError, openai.APIStatusError, LLMOutputError) as exc:
+    except (openai.RateLimitError, openai.APIStatusError, LLMOutputError, Exception) as exc:
+        is_daily_tpd = is_groq_daily_token_limit(exc)
+        if is_daily_tpd:
+            warn_msg = (
+                f"Groq daily token limit reached (tokens per day / TPD): {exc}. "
+                "No retries attempted."
+            )
+            logger.warning(warn_msg)
+            if budget is not None and hasattr(budget, "warnings"):
+                if warn_msg not in budget.warnings:
+                    budget.warnings.append(warn_msg)
+
         # Try fallback provider if configured
         if settings.FALLBACK_LLM_BASE_URL and settings.FALLBACK_LLM_API_KEY:
             logger.warning("Primary LLM failed (%s), trying fallback provider", exc)
@@ -256,9 +312,7 @@ def _compute_retry_wait(retry_state: RetryCallState) -> float:
 
 
 @retry(
-    retry=retry_if_exception_type(
-        (openai.RateLimitError, openai.APIStatusError, openai.APITimeoutError)
-    ),
+    retry=retry_if_exception(_should_retry_llm_call),
     stop=(stop_after_attempt(3) | stop_after_delay(15.0)),
     wait=_compute_retry_wait,
     before_sleep=_before_sleep_callback,

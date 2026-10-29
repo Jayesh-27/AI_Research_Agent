@@ -185,3 +185,110 @@ async def test_relevance_scoring_degradation_records_warning(monkeypatch):
     assert any("Relevance scoring degraded" in w for w in budget.warnings)
 
 
+@pytest.mark.asyncio
+async def test_groq_daily_token_limit_no_retries_and_fallback(monkeypatch):
+    import httpx
+    import openai
+
+    from agent.config import ModelSpec
+    from agent.llm import (
+        _call_with_retry_and_fallback,
+        _should_retry_llm_call,
+        is_groq_daily_token_limit,
+    )
+    from agent.schemas import Plan, TaskType
+
+    # 1. Test detection logic
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    resp_tpd = httpx.Response(
+        429,
+        request=req,
+        json={
+            "error": {
+                "message": (
+                    "Rate limit reached for model on tokens per day (TPD): "
+                    "Limit 100000, Used 100000. Please try again in 14h."
+                )
+            }
+        },
+    )
+    tpd_err = openai.RateLimitError(
+        message="Rate limit reached for model on tokens per day (TPD)",
+        response=resp_tpd,
+        body={"error": {"message": "Rate limit reached for model on tokens per day (TPD)"}},
+    )
+
+    resp_rpm = httpx.Response(
+        429,
+        request=req,
+        json={"error": {"message": "Rate limit reached on requests per minute (RPM). Try again in 2s."}},
+    )
+    rpm_err = openai.RateLimitError(
+        message="Rate limit reached on requests per minute (RPM)",
+        response=resp_rpm,
+        body={"error": {"message": "Rate limit reached on requests per minute (RPM)"}},
+    )
+
+    assert is_groq_daily_token_limit(tpd_err) is True
+    assert is_groq_daily_token_limit(rpm_err) is False
+
+    # 2. Test retry predicate returns False for TPD (no retries) and True for normal 429
+    assert _should_retry_llm_call(tpd_err) is False
+    assert _should_retry_llm_call(rpm_err) is True
+
+    # 3. Test execution: verify NO retries on primary, warning recorded, and fallback used
+    primary_attempts = 0
+    fallback_attempts = 0
+
+    async def mock_call_once(*, base_url, api_key, **kwargs):
+        nonlocal primary_attempts, fallback_attempts
+        if "fallback" in base_url or api_key == "fallback-key":
+            fallback_attempts += 1
+            return Plan(
+                task_type=TaskType.survey,
+                interpretation="Fallback success",
+                sub_questions=[],
+            )
+        else:
+            primary_attempts += 1
+            raise tpd_err
+
+    monkeypatch.setattr("agent.llm._call_once", mock_call_once)
+
+    settings = Settings(
+        LLM_BASE_URL="https://api.groq.com/openai/v1",
+        LLM_API_KEY="groq-key",
+        FALLBACK_LLM_BASE_URL="https://fallback.llm.com/v1",
+        FALLBACK_LLM_API_KEY="fallback-key",
+        FALLBACK_LARGE_MODEL="fallback-llama",
+    )
+    budget = Budget(settings)
+    spec = ModelSpec(
+        model_id="llama-3.3-70b-versatile",
+        tier="large",
+        price_in=0.0,
+        price_out=0.0,
+    )
+
+    result = await _call_with_retry_and_fallback(
+        spec=spec,
+        system="System prompt",
+        user="User question",
+        schema=Plan,
+        settings=settings,
+        budget=budget,
+        temperature=0.0,
+        max_tokens=500,
+        span_name="test_call",
+    )
+
+    # Exactly 1 primary attempt (NO RETRIES!)
+    assert primary_attempts == 1
+    # Fallback succeeded
+    assert fallback_attempts == 1
+    assert result.interpretation == "Fallback success"
+    # Clear warning recorded in budget
+    assert any("tokens per day" in w.lower() for w in budget.warnings)
+
+
+
