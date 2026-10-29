@@ -164,6 +164,12 @@ class Source(BaseModel):
     domain: str = ""
     used_in: list[str] = Field(default_factory=list, description="Finding indices that cite this")
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def _ensure_source_id(cls, v: Any) -> str:
+        s = str(v).strip() if v is not None else ""
+        return s if s else "s1"
+
 
 class Confidence(BaseModel):
     """Deterministically computed confidence for the final answer."""

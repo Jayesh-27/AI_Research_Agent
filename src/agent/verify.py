@@ -18,6 +18,7 @@ from agent.diagnostics import get_debug_collector
 from agent.evidence import EvidenceLedger
 from agent.faithfulness import filter_unsupported_findings_deterministic
 from agent.filtering import calculate_domain_score
+from agent.render import deduplicate_list
 from agent.schemas import (
     Confidence,
     FinalAnswer,
@@ -161,6 +162,16 @@ def verify_and_construct_final_answer(
     else:
         status = "ok"
 
+    clean_assumptions = deduplicate_list(assumptions)
+    clean_limitations = deduplicate_list(limitations)
+    if len(clean_limitations) > 6:
+        extra = len(clean_limitations) - 6
+        clean_limitations = clean_limitations[:6] + [f"(+{extra} more)"]
+    clean_next_steps = deduplicate_list(next_steps)
+
+    # Filter out empty strings from stats.warnings
+    stats.warnings = deduplicate_list([w for w in stats.warnings if w and str(w).strip()])
+
     return FinalAnswer(
         status=status,
         user_question=question,
@@ -168,9 +179,9 @@ def verify_and_construct_final_answer(
         key_findings=valid_findings,
         sources=sources,
         confidence=confidence,
-        assumptions=assumptions,
-        limitations=limitations,
-        next_steps=next_steps,
+        assumptions=clean_assumptions,
+        limitations=clean_limitations,
+        next_steps=clean_next_steps,
         stats=stats,
     )
 

@@ -5,7 +5,27 @@ Produces clean, structured GitHub-flavored Markdown matching the brief's require
 
 from __future__ import annotations
 
+import re
+
 from agent.schemas import FinalAnswer
+
+
+def deduplicate_list(items: list[str]) -> list[str]:
+    """Deduplicate strings normalizing whitespace, case, and punctuation, preserving order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if not item or not isinstance(item, str):
+            continue
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        norm_key = re.sub(r"[^\w\s]", "", cleaned.lower())
+        norm_key = re.sub(r"\s+", " ", norm_key).strip()
+        if norm_key and norm_key not in seen:
+            seen.add(norm_key)
+            result.append(cleaned)
+    return result
 
 
 def render_markdown(answer: FinalAnswer) -> str:
@@ -35,9 +55,11 @@ def render_markdown(answer: FinalAnswer) -> str:
     # Sources
     lines.append("## Sources")
     if answer.sources:
-        for src in answer.sources:
+        for idx, src in enumerate(answer.sources, 1):
+            sid = src.id if src.id and src.id.strip() else f"s{idx}"
+            title = src.title if src.title and src.title.strip() else (src.domain or f"Source {idx}")
             used_str = f" _(Used in: {', '.join(src.used_in)})_" if src.used_in else ""
-            lines.append(f"- **[{src.id}]** [{src.title}]({src.url}) - `{src.domain}`{used_str}")
+            lines.append(f"- **[{sid}]** [{title}]({src.url}) - `{src.domain}`{used_str}")
     else:
         lines.append("_No external sources cited._")
     lines.append("")
@@ -48,33 +70,39 @@ def render_markdown(answer: FinalAnswer) -> str:
         f"- **Overall Level:** {answer.confidence.level.capitalize()} ({answer.confidence.score:.3f})"
     )
     if answer.confidence.rationale:
-        for r in answer.confidence.rationale:
+        for r in deduplicate_list(answer.confidence.rationale):
             lines.append(f"  - {r}")
     lines.append("")
 
     # Assumptions
     lines.append("## Assumptions")
-    if answer.assumptions:
-        for a in answer.assumptions:
+    clean_assumptions = deduplicate_list(answer.assumptions)
+    if clean_assumptions:
+        for a in clean_assumptions:
             lines.append(f"- {a}")
     else:
         lines.append("- None explicitly assumed.")
     lines.append("")
 
-    # Limitations
+    # Limitations (deduplicate and cap at 6)
     lines.append("## Limitations")
-    if answer.limitations:
-        for lim in answer.limitations:
+    clean_limitations = deduplicate_list(answer.limitations)
+    if clean_limitations:
+        if len(clean_limitations) > 6:
+            extra = len(clean_limitations) - 6
+            clean_limitations = clean_limitations[:6] + [f"(+{extra} more)"]
+        for lim in clean_limitations:
             lines.append(f"- {lim}")
     else:
         lines.append("- No critical limitations flagged.")
     lines.append("")
 
-    # Next Steps
+    # Next Steps (numbered with real incrementing numbers)
     lines.append("## Suggested Next Steps")
-    if answer.next_steps:
-        for step in answer.next_steps:
-            lines.append(f"1. {step}")
+    clean_next_steps = deduplicate_list(answer.next_steps)
+    if clean_next_steps:
+        for idx, step in enumerate(clean_next_steps, 1):
+            lines.append(f"{idx}. {step}")
     else:
         lines.append("1. Validate findings against primary vendor documentation.")
     lines.append("")
@@ -92,9 +120,12 @@ def render_markdown(answer: FinalAnswer) -> str:
             calls_str = ", ".join(f"{k}: {v}" for k, v in s.tool_calls.items())
             lines.append(f"- **Tool Calls:** {calls_str}")
         if s.fallbacks_used:
-            lines.append(f"- **Fallbacks Triggered:** {', '.join(s.fallbacks_used)}")
+            clean_fb = deduplicate_list(s.fallbacks_used)
+            lines.append(f"- **Fallbacks Triggered:** {', '.join(clean_fb)}")
         if s.warnings:
-            lines.append(f"- **Warnings:** {', '.join(s.warnings)}")
+            clean_warn = [w for w in deduplicate_list(s.warnings) if w and w.strip()]
+            if clean_warn:
+                lines.append(f"- **Warnings:** {', '.join(clean_warn)}")
         lines.append("")
 
     return "\n".join(lines)

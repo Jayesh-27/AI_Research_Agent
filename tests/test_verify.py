@@ -1,10 +1,14 @@
 """Unit tests for citation verification, confidence calculation, and guardrails."""
 
 from agent.evidence import EvidenceLedger
+from agent.render import deduplicate_list, render_markdown
 from agent.schemas import (
+    Confidence,
+    FinalAnswer,
     KeyFinding,
     Plan,
     RunStats,
+    Source,
     SubQuestion,
     SynthesisOutput,
     TaskType,
@@ -356,4 +360,47 @@ def test_stale_year_in_assumptions_emits_warning():
     assert any(
         "Stale date detected" in lim and "2023" in lim for lim in final_ans.limitations
     )
+
+
+def test_deduplicate_list_normalizes_and_preserves_order():
+    raw = [
+        "Limitation A.",
+        "limitation a",
+        "  Limitation B  ",
+        "Limitation B.",
+        "Limitation C",
+    ]
+    res = deduplicate_list(raw)
+    assert res == ["Limitation A.", "Limitation B", "Limitation C"]
+
+
+def test_render_markdown_numbering_and_clean_lists():
+    ans = FinalAnswer(
+        status="ok",
+        user_question="Vector DB comparison",
+        short_answer="Answer summary",
+        key_findings=[KeyFinding(statement="Finding 1", evidence_ids=["e1"])],
+        sources=[Source(id="", title="Source Title", url="https://example.com", domain="example.com")],
+        confidence=Confidence(level="high", score=0.85, rationale=[]),
+        assumptions=["Assumption 1", "assumption 1.", "Assumption 2"],
+        limitations=[f"Limitation {i}" for i in range(1, 9)],  # 8 limitations
+        next_steps=["Step 1", "Step 2", "Step 3"],
+    )
+
+    md = render_markdown(ans)
+
+    # Numbered next steps must be sequential (1. Step 1 \n 2. Step 2 \n 3. Step 3)
+    assert "1. Step 1" in md
+    assert "2. Step 2" in md
+    assert "3. Step 3" in md
+    assert "1. Step 2" not in md
+
+    # Source ID must not be empty (not - ****)
+    assert "**[s1]**" in md
+    assert "- ****" not in md
+
+    # Limitations capped at 6 with (+2 more)
+    assert "(+2 more)" in md
+    assert "- Limitation 6" in md
+    assert "- Limitation 7" not in md
 
