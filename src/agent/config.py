@@ -71,7 +71,13 @@ class Settings(BaseSettings):
     MAX_FETCHES: int = Field(default=12, ge=1)
     MAX_LLM_CALLS: int = Field(default=30, ge=1)
     MAX_REPLANS: int = Field(default=1, ge=0)
-    RUN_TIMEOUT_S: int = Field(default=120, ge=10, description="Overall run timeout in seconds")
+    RUN_TIMEOUT_S: int = Field(default=120, ge=1, description="Overall run timeout in seconds")
+    PIPELINE_SOFT_DEADLINE_S: int = Field(
+        default=75, ge=1, description="Soft deadline for research phase"
+    )
+    SYNTHESIS_TIMEOUT_S: int = Field(
+        default=30, ge=1, description="Timeout for final synthesis and verification"
+    )
     TOOL_TIMEOUT_S: int = Field(default=10, ge=1, description="Per-tool timeout in seconds")
     FETCH_MAX_BYTES: int = Field(default=1_500_000, ge=1024, description="Max bytes per fetch")
 

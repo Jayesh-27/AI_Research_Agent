@@ -98,8 +98,9 @@ def verify_and_construct_final_answer(
 
     # Append runtime warnings to limitations
     for warning in stats.warnings:
-        if warning not in limitations:
-            limitations.append(warning)
+        clean_w = str(warning).strip()
+        if clean_w and clean_w not in limitations:
+            limitations.append(clean_w)
 
     if not valid_findings and not sources:
         status: Literal["ok", "partial", "low_confidence", "failed"] = "failed"

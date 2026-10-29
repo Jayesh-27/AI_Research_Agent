@@ -1,5 +1,6 @@
 """End-to-end integration tests for the research orchestrator."""
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -125,3 +126,101 @@ async def test_orchestrator_mocked_end_to_end():
         assert result.sources[0].url == "https://qdrant.tech/features"
         assert result.stats is not None
         assert result.confidence.score > 0.0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_timeout_with_evidence_yields_partial():
+    mock_plan = Plan(
+        task_type=TaskType.survey,
+        interpretation="Survey vector DBs",
+        assumptions=[],
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="What are top open-source vector DBs?",
+                rationale="Core comparison",
+                tools=[ToolName.web_search],
+                search_queries=["vector databases"],
+            )
+        ],
+        success_criteria=[],
+    )
+
+    mock_synthesis = SynthesisOutput(
+        short_answer="Partial synthesis from available evidence.",
+        key_findings=[
+            KeyFinding(
+                statement="Qdrant is open-source vector store.",
+                evidence_ids=["e1"],
+            )
+        ],
+        assumptions=[],
+        limitations=[],
+        next_steps=[],
+        self_reported_confidence="medium",
+    )
+
+    async def slow_execute_plan(sub_questions, ledger, **kwargs):
+        ledger.add_structured_evidence(
+            sub_question_id="sq1",
+            claim="Qdrant is open-source vector store.",
+            structured_data_str="Qdrant is an open-source vector database.",
+            url="https://qdrant.tech",
+            title="Qdrant",
+        )
+        await asyncio.sleep(1.5)
+
+    with (
+        patch("agent.orchestrator.create_plan", new_callable=AsyncMock) as p_plan,
+        patch("agent.orchestrator.execute_plan", side_effect=slow_execute_plan),
+        patch("agent.orchestrator.synthesize_answer", new_callable=AsyncMock) as p_synth,
+    ):
+        p_plan.return_value = mock_plan
+        p_synth.return_value = mock_synthesis
+
+        settings = Settings(
+            LLM_API_KEY="test_key",
+            PIPELINE_SOFT_DEADLINE_S=1,
+            SYNTHESIS_TIMEOUT_S=2,
+            RUN_TIMEOUT_S=3,
+            MAX_REPLANS=0,
+        )
+        result: FinalAnswer = await run_research(
+            "What are top open-source vector DBs?",
+            settings=settings,
+        )
+
+        assert result.status == "partial"
+        assert any(
+            "deadline" in lim.lower() or "partial" in lim.lower() or "limit" in lim.lower()
+            for lim in result.limitations
+        )
+        assert result.short_answer != ""
+        assert not result.short_answer.startswith("Internal pipeline failure: ")
+        assert result.stats is not None
+        assert result.stats.latency_s > 0
+        assert not any(w == "" for w in result.stats.warnings)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_timeout_with_empty_ledger_yields_failed():
+    async def slow_create_plan(*args, **kwargs):
+        await asyncio.sleep(0.5)
+
+    with patch("agent.orchestrator.create_plan", side_effect=slow_create_plan):
+        settings = Settings(
+            LLM_API_KEY="test_key",
+            PIPELINE_SOFT_DEADLINE_S=1,
+            SYNTHESIS_TIMEOUT_S=1,
+            RUN_TIMEOUT_S=1,
+        )
+        result: FinalAnswer = await run_research(
+            "What are top open-source vector DBs?",
+            settings=settings,
+        )
+
+        assert result.status == "failed"
+        assert "No verified evidence gathered before the time limit." in result.short_answer
+        assert result.short_answer != ""
+        assert result.stats is not None
+        assert not any(w == "" for w in result.stats.warnings)
