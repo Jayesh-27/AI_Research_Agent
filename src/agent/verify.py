@@ -82,7 +82,7 @@ def verify_and_construct_final_answer(
     sources = list(sources_by_url.values())
 
     # 3. Compute deterministic confidence score
-    confidence, raw_level = _compute_confidence(
+    confidence, raw_level, coverage, covered_count, total_sq, uncovered_sqs = _compute_confidence(
         plan=plan,
         ledger=ledger,
         sources=sources,
@@ -106,6 +106,16 @@ def verify_and_construct_final_answer(
         status: Literal["ok", "partial", "low_confidence", "failed"] = "failed"
         short_answer = "Unable to answer the question due to insufficient verified evidence."
         limitations.append("No reliable sources or verified quotes could be retrieved.")
+    elif coverage < 0.5:
+        status = "partial"
+        uncovered_names = (
+            "; ".join(f"'{q}'" for q in uncovered_sqs) if uncovered_sqs else "uncovered aspects"
+        )
+        limitations.append(
+            f"Coverage incomplete ({covered_count}/{total_sq} covered); insufficient evidence for: {uncovered_names}"
+        )
+        if confidence.level == "low" and not short_answer.startswith("[Low-confidence notice]"):
+            short_answer = f"[Low-confidence notice] {short_answer}"
     elif confidence.level == "low":
         status = "low_confidence"
         if not short_answer.startswith("[Low-confidence notice]"):
@@ -137,8 +147,18 @@ def _compute_confidence(
     sources: list[Source],
     stats: RunStats,
     llm_level: Literal["high", "medium", "low"],
-) -> tuple[Confidence, Literal["high", "medium", "low"]]:
-    """Compute mathematical confidence score and factor breakdown."""
+) -> tuple[Confidence, Literal["high", "medium", "low"], float, int, int, list[str]]:
+    """Compute mathematical confidence score and factor breakdown.
+
+    Coverage Definition:
+        A sub-question is marked COVERED if and only if:
+        n_evidence >= 2 and (n_distinct_domains >= 2 or any structured-API evidence)
+
+    Coverage Caps:
+        - coverage < 0.34 -> confidence level capped at low
+        - coverage < 0.67 -> confidence level capped at medium
+        - coverage < 0.50 -> final status set to partial with limitation
+    """
     rationale: list[str] = []
 
     # Factor 1: Source quality (mean domain score of cited sources)
@@ -148,18 +168,25 @@ def _compute_confidence(
         source_quality = 0.0
     rationale.append(f"Source authority: {source_quality:.2f} (weight: 30%)")
 
-    # Factor 2: Sub-question coverage (>=2 evidence from >=2 domains)
+    # Factor 2: Sub-question coverage
+    # Explicit rule: n_evidence >= 2 and (n_distinct_domains >= 2 or any structured-API evidence)
     collector = get_debug_collector()
     covered_count = 0
     total_sq = len(plan.sub_questions) if plan.sub_questions else 1
+    uncovered_sqs: list[str] = []
     for sq in plan.sub_questions:
         evs = ledger.get_by_sub_question(sq.id)
         domains = {ev.domain for ev in evs if ev.domain}
-        has_structured = any(ev.domain == "github.com" or "GitHub" in ev.title for ev in evs)
-        is_cov = len(evs) >= 2 and len(domains) >= 2
-        rule_desc = "n_evidence>=2 and n_domains>=2"
+        has_structured = any(
+            ev.domain == "github.com" or "GitHub" in ev.title or "github" in ev.url.lower()
+            for ev in evs
+        )
+        is_cov = len(evs) >= 2 and (len(domains) >= 2 or has_structured)
+        rule_desc = "n_evidence >= 2 and (n_domains >= 2 or structured_api)"
         if is_cov:
             covered_count += 1
+        else:
+            uncovered_sqs.append(sq.question)
         if collector:
             collector.record_coverage_breakdown(
                 sq_id=sq.id,
@@ -219,15 +246,31 @@ def _compute_confidence(
         calc_level = "low"
 
     caps_applied: list[str] = []
-    # Rule: LLM can LOWER confidence, never raise it
     level_order = {"low": 1, "medium": 2, "high": 3}
-    if level_order[llm_level] < level_order[calc_level]:
-        final_level = llm_level
-        cap_msg = f"Confidence lowered from {calc_level} to {llm_level} based on synthesizer self-assessment"
+    final_level = calc_level
+
+    # Coverage caps:
+    # coverage < 0.34 -> confidence level max low
+    # coverage < 0.67 -> confidence level max medium
+    if coverage < 0.34:
+        if level_order[final_level] > level_order["low"]:
+            cap_msg = f"Confidence capped at low (coverage {coverage:.2f} < 0.34)"
+            caps_applied.append(cap_msg)
+            rationale.append(cap_msg)
+            final_level = "low"
+    elif coverage < 0.67:
+        if level_order[final_level] > level_order["medium"]:
+            cap_msg = f"Confidence capped at medium (coverage {coverage:.2f} < 0.67)"
+            caps_applied.append(cap_msg)
+            rationale.append(cap_msg)
+            final_level = "medium"
+
+    # Rule: LLM can LOWER confidence, never raise it
+    if level_order[llm_level] < level_order[final_level]:
+        cap_msg = f"Confidence lowered from {final_level} to {llm_level} based on synthesizer self-assessment"
         caps_applied.append(cap_msg)
         rationale.append(cap_msg)
-    else:
-        final_level = calc_level
+        final_level = llm_level
 
     if collector:
         factors_dict = {
@@ -245,4 +288,11 @@ def _compute_confidence(
             caps_applied=caps_applied,
         )
 
-    return Confidence(level=final_level, score=round(score, 3), rationale=rationale), calc_level
+    return (
+        Confidence(level=final_level, score=round(score, 3), rationale=rationale),
+        calc_level,
+        coverage,
+        covered_count,
+        total_sq,
+        uncovered_sqs,
+    )

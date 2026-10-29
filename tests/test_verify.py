@@ -118,3 +118,189 @@ def test_low_confidence_guardrail_applied():
     assert final_ans.confidence.level == "low"
     assert "insufficient verified evidence" in final_ans.short_answer.lower()
 
+
+def test_coverage_rule_distinct_domains_and_structured_api():
+    ledger = EvidenceLedger()
+    # sq1 has 2 evidence from 2 distinct domains -> covered
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim A",
+        quote="Quote A",
+        url="https://site-a.com/doc",
+        title="Site A",
+        document_text="Quote A",
+    )
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim B",
+        quote="Quote B",
+        url="https://site-b.com/doc",
+        title="Site B",
+        document_text="Quote B",
+    )
+
+    # sq2 has 2 evidence from 1 domain (not structured) -> NOT covered
+    ledger.add_evidence(
+        sub_question_id="sq2",
+        claim="Claim C1",
+        quote="Quote C1",
+        url="https://site-c.com/1",
+        title="Site C 1",
+        document_text="Quote C1",
+    )
+    ledger.add_evidence(
+        sub_question_id="sq2",
+        claim="Claim C2",
+        quote="Quote C2",
+        url="https://site-c.com/2",
+        title="Site C 2",
+        document_text="Quote C2",
+    )
+
+    # sq3 has 2 evidence from GitHub API (structured) -> covered
+    ledger.add_structured_evidence(
+        sub_question_id="sq3",
+        claim="GitHub stats 1",
+        structured_data_str="stars=100",
+        url="https://github.com/org/repo1",
+        title="Repo 1",
+    )
+    ledger.add_structured_evidence(
+        sub_question_id="sq3",
+        claim="GitHub stats 2",
+        structured_data_str="stars=200",
+        url="https://github.com/org/repo2",
+        title="Repo 2",
+    )
+
+    plan = Plan(
+        task_type=TaskType.comparison,
+        interpretation="Compare",
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="Q1",
+                rationale="r1",
+                tools=[ToolName.web_search],
+                search_queries=["q1"],
+            ),
+            SubQuestion(
+                id="sq2",
+                question="Q2",
+                rationale="r2",
+                tools=[ToolName.web_search],
+                search_queries=["q2"],
+            ),
+            SubQuestion(
+                id="sq3",
+                question="Q3",
+                rationale="r3",
+                tools=[ToolName.github_repo_stats],
+                search_queries=["q3"],
+            ),
+        ],
+    )
+
+    synthesis = SynthesisOutput(
+        short_answer="Findings",
+        key_findings=[
+            KeyFinding(statement="Finding 1", evidence_ids=["e1"]),
+            KeyFinding(statement="Finding 2", evidence_ids=["e3"]),
+            KeyFinding(statement="Finding 3", evidence_ids=["e5"]),
+        ],
+        assumptions=[],
+        limitations=[],
+        next_steps=[],
+        self_reported_confidence="high",
+    )
+    stats = RunStats(run_id="test-coverage")
+
+    final_ans = verify_and_construct_final_answer(
+        question="Test",
+        plan=plan,
+        synthesis=synthesis,
+        ledger=ledger,
+        stats=stats,
+    )
+
+    # sq1 (covered), sq2 (not covered), sq3 (covered) -> 2/3 = 66.7% coverage
+    assert "2/3 covered" in final_ans.confidence.rationale[1]
+    # Coverage >= 0.5 so status is ok
+    assert final_ans.status == "ok"
+    # Coverage < 0.67 so confidence capped at medium
+    assert final_ans.confidence.level == "medium"
+
+
+def test_coverage_below_half_forces_partial_status():
+    ledger = EvidenceLedger()
+    # sq1 covered
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim A",
+        quote="Quote A",
+        url="https://site-a.com/doc",
+        title="Site A",
+        document_text="Quote A",
+    )
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim B",
+        quote="Quote B",
+        url="https://site-b.com/doc",
+        title="Site B",
+        document_text="Quote B",
+    )
+
+    # sq2, sq3 have no evidence -> coverage 1/3 = 33.3% (< 0.5)
+    plan = Plan(
+        task_type=TaskType.comparison,
+        interpretation="Compare",
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="Q1",
+                rationale="r1",
+                tools=[ToolName.web_search],
+                search_queries=["q1"],
+            ),
+            SubQuestion(
+                id="sq2",
+                question="Q2",
+                rationale="r2",
+                tools=[ToolName.web_search],
+                search_queries=["q2"],
+            ),
+            SubQuestion(
+                id="sq3",
+                question="Q3",
+                rationale="r3",
+                tools=[ToolName.github_repo_stats],
+                search_queries=["q3"],
+            ),
+        ],
+    )
+
+    synthesis = SynthesisOutput(
+        short_answer="Findings",
+        key_findings=[
+            KeyFinding(statement="Finding 1", evidence_ids=["e1"]),
+        ],
+        assumptions=[],
+        limitations=[],
+        next_steps=[],
+        self_reported_confidence="high",
+    )
+    stats = RunStats(run_id="test-low-cov")
+
+    final_ans = verify_and_construct_final_answer(
+        question="Test",
+        plan=plan,
+        synthesis=synthesis,
+        ledger=ledger,
+        stats=stats,
+    )
+
+    assert final_ans.status == "partial"
+    assert final_ans.confidence.level == "low"  # Capped at low because < 0.34
+    assert any("Coverage incomplete" in lim and "Q2" in lim and "Q3" in lim for lim in final_ans.limitations)
+
