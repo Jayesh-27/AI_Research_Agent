@@ -201,7 +201,21 @@ def _do_ddg_search_sync(query: str, max_results: int) -> list[dict[str, Any]]:
         return []
 
     # Alternative backends across ddgs / duckduckgo_search versions
-    retry_backends = ["duckduckgo", "html", "lite", "brave"]
+    try:
+        ddgs_inst = DDGS()
+        if hasattr(ddgs_inst, "_get_engines"):
+            engines = [
+                e.__class__.__name__.lower()
+                for e in ddgs_inst._get_engines("text", "auto")  # type: ignore[attr-defined]
+            ]
+            retry_backends = [b for b in ["duckduckgo", "brave", "yahoo", "startpage"] if b in engines]
+        else:
+            retry_backends = ["html", "lite"]
+    except Exception:
+        retry_backends = ["duckduckgo", "html"]
+
+    if not retry_backends:
+        retry_backends = ["duckduckgo"]
 
     for b in retry_backends:
         try:

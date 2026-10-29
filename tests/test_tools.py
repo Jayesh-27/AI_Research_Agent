@@ -135,12 +135,12 @@ async def test_ddg_fallback_retries_with_alt_backend(monkeypatch):
         calls.append((keywords, backend))
         if backend == "auto":
             return []  # fails/empty on auto
-        elif backend == "html":
+        elif backend in ("duckduckgo", "html", "brave"):
             return [
                 {
                     "href": "https://example.com/test",
                     "title": "Test Title",
-                    "body": "Test snippet from html backend",
+                    "body": "Test snippet from alternative backend",
                 }
             ]
         return []
@@ -157,6 +157,6 @@ async def test_ddg_fallback_retries_with_alt_backend(monkeypatch):
     assert res.ok is True
     assert len(res.data) == 1
     assert res.data[0]["url"] == "https://example.com/test"
-    # Verify retry occurred with html backend and simplified query
-    assert any(backend == "html" for _, backend in calls)
+    # Verify retry occurred with alternative backend and simplified query
+    assert any(backend in ("duckduckgo", "html", "brave") for _, backend in calls)
 

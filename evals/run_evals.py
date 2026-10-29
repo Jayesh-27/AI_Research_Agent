@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,14 +30,18 @@ from typing import Any
 
 import yaml
 
-from agent.config import Settings
-from agent.orchestrator import run_research
-from evals.baseline import run_baseline
+_EVALS_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _EVALS_DIR.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from agent.config import Settings  # noqa: E402
+from agent.orchestrator import run_research  # noqa: E402
+from evals.baseline import run_baseline  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-_EVALS_DIR = Path(__file__).resolve().parent
 _QUERIES_FILE = _EVALS_DIR / "queries.yaml"
 _RESULTS_DIR = _EVALS_DIR / "results"
 
