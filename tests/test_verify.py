@@ -231,8 +231,8 @@ def test_coverage_rule_distinct_domains_and_structured_api():
     assert "2/3 covered" in final_ans.confidence.rationale[1]
     # Coverage >= 0.5 so status is ok
     assert final_ans.status == "ok"
-    # Coverage < 0.67 so confidence capped at medium
-    assert final_ans.confidence.level == "medium"
+    # Coverage is exactly 2/3 with tolerance -> NOT capped at medium (score >= 0.75 yields high)
+    assert final_ans.confidence.level == "high"
 
 
 def test_coverage_below_half_forces_partial_status():
@@ -305,7 +305,7 @@ def test_coverage_below_half_forces_partial_status():
     )
 
     assert final_ans.status == "partial"
-    assert final_ans.confidence.level == "low"  # Capped at low because < 0.34
+    assert final_ans.confidence.level == "medium"  # 1/3 coverage is not < 1/3 with tolerance -> capped at medium
     assert any("Coverage incomplete" in lim and "Q2" in lim and "Q3" in lim for lim in final_ans.limitations)
 
 
@@ -471,5 +471,65 @@ def test_llm_step_degradation_adds_warning_and_penalty():
     # 2. Confidence penalty is applied (-0.10)
     assert ans_degraded.confidence.score < ans_clean.confidence.score
     assert any("Penalty (-0.10): LLM step degraded" in r for r in ans_degraded.confidence.rationale)
+
+
+def test_confidence_cap_two_thirds_float_tolerance():
+    ledger = EvidenceLedger()
+    # 2 subquestions covered with 2 distinct domains each
+    for sq in ["sq1", "sq2"]:
+        ledger.add_evidence(
+            sub_question_id=sq,
+            claim=f"Claim {sq} 1",
+            quote=f"Quote {sq} 1",
+            url=f"https://domain-{sq}-a.gov/page",
+            title="Title",
+            document_text=f"Quote {sq} 1",
+        )
+        ledger.add_evidence(
+            sub_question_id=sq,
+            claim=f"Claim {sq} 2",
+            quote=f"Quote {sq} 2",
+            url=f"https://domain-{sq}-b.gov/page",
+            title="Title",
+            document_text=f"Quote {sq} 2",
+        )
+
+    # 3 subquestions total -> coverage is exactly 2/3 (0.666666...)
+    plan = Plan(
+        task_type=TaskType.comparison,
+        interpretation="Compare",
+        sub_questions=[
+            SubQuestion(id="sq1", question="Q1", rationale="r1", tools=[ToolName.web_search], search_queries=["q1"]),
+            SubQuestion(id="sq2", question="Q2", rationale="r2", tools=[ToolName.web_search], search_queries=["q2"]),
+            SubQuestion(id="sq3", question="Q3", rationale="r3", tools=[ToolName.web_search], search_queries=["q3"]),
+        ],
+    )
+    synthesis = SynthesisOutput(
+        short_answer="Answer",
+        key_findings=[
+            KeyFinding(statement="F1", evidence_ids=["e1"]),
+            KeyFinding(statement="F2", evidence_ids=["e3"]),
+        ],
+        assumptions=[],
+        limitations=[],
+        next_steps=[],
+        self_reported_confidence="high",
+    )
+    stats = RunStats(run_id="test-tolerance")
+
+    final_ans = verify_and_construct_final_answer(
+        question="Test",
+        plan=plan,
+        synthesis=synthesis,
+        ledger=ledger,
+        stats=stats,
+    )
+
+    # High domain scores (.gov = 0.85) + 2/3 coverage + full verification yields score >= 0.75
+    assert final_ans.confidence.score >= 0.75
+    # Must NOT be capped at medium by a strict 0.67 float comparison
+    assert final_ans.confidence.level == "high"
+    assert not any("capped at medium" in r.lower() for r in final_ans.confidence.rationale)
+
 
 

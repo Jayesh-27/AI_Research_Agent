@@ -200,8 +200,8 @@ def _compute_confidence(
         n_evidence >= 2 and (n_distinct_domains >= 2 or any structured-API evidence)
 
     Coverage Caps:
-        - coverage < 0.34 -> confidence level capped at low
-        - coverage < 0.67 -> confidence level capped at medium
+        - coverage < 1/3 (with tolerance) -> confidence level capped at low
+        - coverage < 2/3 (with tolerance) -> confidence level capped at medium
         - coverage < 0.50 -> final status set to partial with limitation
     """
     rationale: list[str] = []
@@ -307,18 +307,19 @@ def _compute_confidence(
     level_order = {"low": 1, "medium": 2, "high": 3}
     final_level = calc_level
 
-    # Coverage caps:
-    # coverage < 0.34 -> confidence level max low
-    # coverage < 0.67 -> confidence level max medium
-    if coverage < 0.34:
+    # Coverage caps (with float tolerance):
+    # coverage < 1/3 -> confidence level max low
+    # coverage < 2/3 -> confidence level max medium
+    tol = 1e-4
+    if coverage < ((1.0 / 3.0) - tol):
         if level_order[final_level] > level_order["low"]:
-            cap_msg = f"Confidence capped at low (coverage {coverage:.2f} < 0.34)"
+            cap_msg = f"Confidence capped at low (coverage {coverage:.2f} < 1/3)"
             caps_applied.append(cap_msg)
             rationale.append(cap_msg)
             final_level = "low"
-    elif coverage < 0.67:
+    elif coverage < ((2.0 / 3.0) - tol):
         if level_order[final_level] > level_order["medium"]:
-            cap_msg = f"Confidence capped at medium (coverage {coverage:.2f} < 0.67)"
+            cap_msg = f"Confidence capped at medium (coverage {coverage:.2f} < 2/3)"
             caps_applied.append(cap_msg)
             rationale.append(cap_msg)
             final_level = "medium"
