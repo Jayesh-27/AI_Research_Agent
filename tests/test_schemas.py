@@ -1,7 +1,5 @@
 """Unit tests for Pydantic schema validation."""
 
-import pytest
-from pydantic import ValidationError
 
 from agent.schemas import (
     Confidence,
@@ -12,6 +10,7 @@ from agent.schemas import (
     RunStats,
     Source,
     SubQuestion,
+    SynthesisOutput,
     TaskType,
     ToolName,
 )
@@ -30,15 +29,46 @@ def test_sub_question_validation():
     assert len(sq.search_queries) == 2
 
 
-def test_sub_question_max_queries_exceeded():
-    with pytest.raises(ValidationError):
+def test_sub_question_truncates_excess_queries():
+    sq = SubQuestion(
+        id="sq1",
+        question="Too many queries",
+        rationale="testing bounds",
+        tools=[ToolName.web_search],
+        search_queries=["q1", "q2", "q3", "q4"],  # 4 queries truncated to 3
+    )
+    assert len(sq.search_queries) == 3
+    assert sq.search_queries == ["q1", "q2", "q3"]
+
+
+def test_sub_question_dedupes_and_strips_queries():
+    sq = SubQuestion(
+        id="sq1",
+        question="Queries with blanks and dups",
+        rationale="testing bounds",
+        tools=[ToolName.web_search],
+        search_queries=["  q1  ", "", "q1", "q2", "   "],
+    )
+    assert sq.search_queries == ["q1", "q2"]
+
+
+def test_plan_truncates_excess_sub_questions():
+    sub_qs = [
         SubQuestion(
-            id="sq1",
-            question="Too many queries",
-            rationale="testing bounds",
+            id=f"sq{i}",
+            question=f"Q{i}",
+            rationale="testing",
             tools=[ToolName.web_search],
-            search_queries=["q1", "q2", "q3", "q4"],  # max_length is 3
+            search_queries=["q"],
         )
+        for i in range(7)
+    ]
+    plan = Plan(
+        task_type=TaskType.survey,
+        interpretation="testing",
+        sub_questions=sub_qs,
+    )
+    assert len(plan.sub_questions) == 5
 
 
 def test_plan_validation():
@@ -120,3 +150,21 @@ def test_final_answer_complete_structure():
     assert ans.confidence.level == "high"
     assert len(ans.key_findings) == 1
     assert len(ans.sources) == 1
+
+
+def test_synthesis_output_drops_empty_evidence_ids_finding():
+    data = {
+        "short_answer": "Summary",
+        "key_findings": [
+            {"statement": "Valid finding", "evidence_ids": ["e1"]},
+            {"statement": "Invalid finding with no IDs", "evidence_ids": []},
+            {"statement": "Another invalid finding", "evidence_ids": [""]},
+        ],
+        "assumptions": ["  assumption 1  ", "assumption 1", ""],
+        "limitations": [],
+        "next_steps": [],
+    }
+    s = SynthesisOutput.model_validate(data)
+    assert len(s.key_findings) == 1
+    assert s.key_findings[0].statement == "Valid finding"
+    assert s.assumptions == ["assumption 1"]

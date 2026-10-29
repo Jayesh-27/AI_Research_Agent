@@ -7,9 +7,9 @@ parse failure is a handled error, never a crash.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -50,6 +50,27 @@ class SubQuestion(BaseModel):
         default_factory=list, max_length=3, description="Up to 3 search queries"
     )
 
+    @field_validator("search_queries", mode="before")
+    @classmethod
+    def _clean_search_queries(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            s_lower = s.lower()
+            if s_lower not in seen:
+                seen.add(s_lower)
+                cleaned.append(s)
+            if len(cleaned) == 3:
+                break
+        return cleaned
+
 
 class Plan(BaseModel):
     """Structured research plan produced by the planner LLM."""
@@ -60,6 +81,34 @@ class Plan(BaseModel):
     sub_questions: list[SubQuestion] = Field(max_length=5)
     success_criteria: list[str] = Field(default_factory=list)
     needs_clarification: bool = False
+
+    @field_validator("sub_questions", mode="before")
+    @classmethod
+    def _clean_sub_questions(cls, v: Any) -> list[Any]:
+        if not isinstance(v, list):
+            return []
+        return v[:5]
+
+    @field_validator("assumptions", "success_criteria", mode="before")
+    @classmethod
+    def _clean_string_lists(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            s_lower = s.lower()
+            if s_lower not in seen:
+                seen.add(s_lower)
+                cleaned.append(s)
+            if len(cleaned) == 10:
+                break
+        return cleaned
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +248,27 @@ class CoverageGap(BaseModel):
     sub_question_id: str
     suggested_queries: list[str] = Field(default_factory=list)
 
+    @field_validator("suggested_queries", mode="before")
+    @classmethod
+    def _clean_gap_queries(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            s_lower = s.lower()
+            if s_lower not in seen:
+                seen.add(s_lower)
+                cleaned.append(s)
+            if len(cleaned) == 3:
+                break
+        return cleaned
+
 
 class CoverageResult(BaseModel):
     """Result of the coverage check."""
@@ -217,11 +287,68 @@ class SynthesisOutput(BaseModel):
     next_steps: list[str] = Field(default_factory=list)
     self_reported_confidence: Literal["high", "medium", "low"] = "medium"
 
+    @field_validator("key_findings", mode="before")
+    @classmethod
+    def _clean_key_findings(cls, v: Any) -> list[Any]:
+        if not isinstance(v, list):
+            return []
+        cleaned = []
+        for item in v:
+            if isinstance(item, dict):
+                eids = item.get("evidence_ids")
+                if isinstance(eids, list):
+                    item["evidence_ids"] = [str(e).strip() for e in eids if str(e).strip()]
+                # Drop findings without evidence IDs rather than crashing validation
+                if not item.get("evidence_ids"):
+                    continue
+            cleaned.append(item)
+        return cleaned
+
+    @field_validator("assumptions", "limitations", "next_steps", mode="before")
+    @classmethod
+    def _clean_synthesis_lists(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            s_lower = s.lower()
+            if s_lower not in seen:
+                seen.add(s_lower)
+                cleaned.append(s)
+        return cleaned
+
 
 class QueryRewrite(BaseModel):
     """Rewritten search queries from the LLM."""
 
     queries: list[str] = Field(default_factory=list)
+
+    @field_validator("queries", mode="before")
+    @classmethod
+    def _clean_queries(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            s_lower = s.lower()
+            if s_lower not in seen:
+                seen.add(s_lower)
+                cleaned.append(s)
+            if len(cleaned) == 5:
+                break
+        return cleaned
 
 
 class ScanResult(BaseModel):
