@@ -55,6 +55,7 @@ async def create_plan(
             settings=settings,
             budget=budget,
             temperature=0.0,
+            max_tokens=settings.MAX_TOKENS_PLAN,
             span_name="plan_generation",
         )
         return plan

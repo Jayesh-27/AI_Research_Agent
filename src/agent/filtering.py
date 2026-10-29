@@ -170,6 +170,7 @@ async def filter_and_rank_hits(
             settings=settings,
             budget=budget,
             temperature=0.0,
+            max_tokens=settings.MAX_TOKENS_RELEVANCE,
             span_name="relevance_scoring",
         )
         for item in batch.scores:

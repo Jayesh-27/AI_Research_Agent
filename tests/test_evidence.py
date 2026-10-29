@@ -1,6 +1,12 @@
 """Unit tests for evidence extraction and verbatim quote verification."""
 
-from agent.evidence import EvidenceLedger, verify_quote_verbatim
+import asyncio
+from unittest.mock import patch
+
+import pytest
+
+from agent.config import Settings
+from agent.evidence import EvidenceLedger, extract_evidence_from_page, verify_quote_verbatim
 
 
 def test_quote_verification_exact_match():
@@ -74,3 +80,29 @@ def test_evidence_ledger_stores_and_rejects():
     assert "[e1]" in rendered
     assert "[e2]" in rendered
     assert "Milvus is a distributed vector database" in rendered
+
+
+@pytest.mark.asyncio
+async def test_extract_evidence_timeout_skips_page():
+    ledger = EvidenceLedger()
+    page_data = {
+        "url": "https://example.com/slow",
+        "title": "Slow Page",
+        "text": "Some text",
+        "full_text": "Some text",
+    }
+
+    async def slow_call_json(*args, **kwargs):
+        await asyncio.sleep(1.5)
+
+    with patch("agent.evidence.call_json", side_effect=slow_call_json):
+        settings = Settings(PAGE_EXTRACTION_TIMEOUT_S=1)
+        res = await extract_evidence_from_page(
+            page_data=page_data,
+            sub_question_id="sq1",
+            sub_question_text="Slow question",
+            ledger=ledger,
+            settings=settings,
+        )
+        assert res == []
+        assert ledger.all() == []

@@ -19,7 +19,7 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential_jitter,
+    stop_after_delay,
 )
 
 from agent.config import MODEL_PRICING, Budget, ModelSpec, Settings
@@ -69,18 +69,24 @@ class ModelRouter:
 # ---------------------------------------------------------------------------
 
 _clients: dict[str, openai.AsyncOpenAI] = {}
-_llm_call_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+_llm_semaphores: dict[tuple[asyncio.AbstractEventLoop, int], asyncio.Semaphore] = {}
 
 
-def _get_call_lock() -> asyncio.Lock:
-    """Return an asyncio.Lock bound to the current running event loop."""
+def _get_call_semaphore(concurrency: int = 3) -> asyncio.Semaphore:
+    """Return an asyncio.Semaphore bound to the current running event loop."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.Lock()
-    if loop not in _llm_call_locks:
-        _llm_call_locks[loop] = asyncio.Lock()
-    return _llm_call_locks[loop]
+        return asyncio.Semaphore(concurrency)
+    key = (loop, concurrency)
+    if key not in _llm_semaphores:
+        _llm_semaphores[key] = asyncio.Semaphore(concurrency)
+    return _llm_semaphores[key]
+
+
+def _get_call_lock() -> asyncio.Semaphore:
+    """Backward compatibility alias for _get_call_semaphore."""
+    return _get_call_semaphore(3)
 
 
 def _get_client(base_url: str, api_key: str) -> openai.AsyncOpenAI:
@@ -218,6 +224,7 @@ async def _call_with_retry_and_fallback(
                 system=system,
                 user=user,
                 schema=schema,
+                settings=settings,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 span_name=f"{span_name}_fallback",
@@ -226,12 +233,28 @@ async def _call_with_retry_and_fallback(
         raise
 
 
+def _compute_retry_wait(retry_state: RetryCallState) -> float:
+    """Respect Retry-After header if present, with exponential backoff capped at 8s."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if exc and hasattr(exc, "response") and exc.response is not None:
+        headers = getattr(exc.response, "headers", {})
+        retry_after = headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(float(retry_after), 8.0)
+            except ValueError:
+                pass
+    # Exponential backoff capped at 8 seconds
+    base = 1.0 * (2 ** (retry_state.attempt_number - 1))
+    return min(base, 8.0)
+
+
 @retry(
     retry=retry_if_exception_type(
         (openai.RateLimitError, openai.APIStatusError, openai.APITimeoutError)
     ),
-    stop=stop_after_attempt(3),
-    wait=wait_exponential_jitter(initial=1, max=30, jitter=2),
+    stop=(stop_after_attempt(3) | stop_after_delay(15.0)),
+    wait=_compute_retry_wait,
     before_sleep=_before_sleep_callback,
     reraise=True,
 )
@@ -255,6 +278,7 @@ async def _call_primary(
         system=system,
         user=user,
         schema=schema,
+        settings=settings,
         temperature=temperature,
         max_tokens=max_tokens,
         span_name=span_name,
@@ -270,6 +294,7 @@ async def _call_once(
     system: str,
     user: str,
     schema: type[T],
+    settings: Settings | None = None,
     temperature: float,
     max_tokens: int,
     span_name: str,
@@ -280,22 +305,83 @@ async def _call_once(
     trace = get_current_trace()
     span = trace.start_span(span_name, model=spec.model_id, tier=spec.tier) if trace else None
 
+    concurrency = settings.LLM_CONCURRENCY if settings else 3
+    sem = _get_call_semaphore(concurrency)
+
+    extra_kwargs: dict[str, Any] = {}
+    if any(pat in spec.model_id.lower() for pat in ("gpt-oss", "o1", "o3")):
+        if settings:
+            effort = (
+                settings.SMALL_REASONING_EFFORT
+                if spec.tier == "small"
+                else settings.LARGE_REASONING_EFFORT
+            )
+            if effort:
+                extra_kwargs["reasoning_effort"] = effort
+        else:
+            extra_kwargs["reasoning_effort"] = "low" if spec.tier == "small" else "medium"
+
     start = time.time()
     try:
-        async with _get_call_lock():
-            response = await client.chat.completions.create(
-                model=spec.model_id,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-                timeout=30.0,
-            )
-            # Throttle between calls to protect free-tier rate limits
-            await asyncio.sleep(0.5)
+        async with sem:
+            try:
+                response = await client.chat.completions.create(
+                    model=spec.model_id,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    timeout=30.0,
+                    **extra_kwargs,
+                )
+            except openai.BadRequestError as err:
+                err_str = str(err).lower()
+                if "reasoning_effort" in extra_kwargs and (
+                    "reasoning_effort" in err_str or "unsupported" in err_str
+                ):
+                    logger.warning(
+                        "Model %s rejected reasoning_effort (%s); retrying without it",
+                        spec.model_id,
+                        err,
+                    )
+                    extra_kwargs.pop("reasoning_effort", None)
+                    response = await client.chat.completions.create(
+                        model=spec.model_id,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format={"type": "json_object"},
+                        timeout=30.0,
+                        **extra_kwargs,
+                    )
+                elif "max completion tokens reached" in err_str or "json_validate_failed" in err_str:
+                    bumped_tokens = max(max_tokens * 2, 1500)
+                    logger.warning(
+                        "JSON validation truncated at %d tokens for %s; retrying with %d tokens",
+                        max_tokens,
+                        span_name,
+                        bumped_tokens,
+                    )
+                    response = await client.chat.completions.create(
+                        model=spec.model_id,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        temperature=temperature,
+                        max_tokens=bumped_tokens,
+                        response_format={"type": "json_object"},
+                        timeout=30.0,
+                        **extra_kwargs,
+                    )
+                else:
+                    raise
 
         raw = response.choices[0].message.content or "{}"
         tokens_in = response.usage.prompt_tokens if response.usage else 0
@@ -349,6 +435,7 @@ async def _call_once(
                 system=system,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                finish_reason=finish_reason,
             )
     except Exception as exc:
         if span:
@@ -372,11 +459,18 @@ async def _repair_once(
     system: str,
     temperature: float,
     max_tokens: int,
+    finish_reason: str | None = None,
 ) -> T:
     """Send the error and previous output back, asking for corrected JSON."""
+    repair_max_tokens = max(max_tokens, 1000)
+    trunc_note = ""
+    if finish_reason == "length":
+        trunc_note = "Note: Previous output was truncated by length limit. Return a more concise, valid, complete JSON object."
+
     repair_prompt = (
         f"Your previous JSON output had an error:\n"
         f"```\n{error}\n```\n\n"
+        f"{trunc_note}\n\n"
         f"Previous output:\n```json\n{raw_output[:2000]}\n```\n\n"
         f"Return ONLY the corrected, valid JSON. No explanation."
     )
@@ -389,7 +483,7 @@ async def _repair_once(
                 {"role": "user", "content": repair_prompt},
             ],
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=repair_max_tokens,
             response_format={"type": "json_object"},
             timeout=30.0,
         )

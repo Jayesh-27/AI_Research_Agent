@@ -62,6 +62,7 @@ async def synthesize_answer(
             settings=settings,
             budget=budget,
             temperature=0.0,
+            max_tokens=settings.MAX_TOKENS_SYNTHESIS,
             span_name="synthesis",
         )
         return output

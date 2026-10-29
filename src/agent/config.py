@@ -81,6 +81,23 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_S: int = Field(default=10, ge=1, description="Per-tool timeout in seconds")
     FETCH_MAX_BYTES: int = Field(default=1_500_000, ge=1024, description="Max bytes per fetch")
 
+    # --- Performance tuning & token limits ---
+    LLM_CONCURRENCY: int = Field(default=3, ge=1, description="Max concurrent LLM calls")
+    SMALL_REASONING_EFFORT: str = Field(
+        default="low", description="Reasoning effort for small reasoning model"
+    )
+    LARGE_REASONING_EFFORT: str = Field(
+        default="medium", description="Reasoning effort for large reasoning model"
+    )
+    PAGE_EXTRACTION_TIMEOUT_S: int = Field(
+        default=15, ge=1, description="Per-page extraction timeout in seconds"
+    )
+    MAX_TOKENS_RELEVANCE: int = Field(default=1000, ge=100)
+    MAX_TOKENS_EXTRACTION: int = Field(default=1000, ge=100)
+    MAX_TOKENS_COVERAGE: int = Field(default=500, ge=100)
+    MAX_TOKENS_PLAN: int = Field(default=1500, ge=200)
+    MAX_TOKENS_SYNTHESIS: int = Field(default=2000, ge=500)
+
     # --- Feature flags ---
     ENABLE_JUDGE: bool = False
     CHAOS_MODE: str = "off"  # off | search_down | timeout | malformed | injection | empty

@@ -6,6 +6,7 @@ Unverified quotes are dropped to eliminate hallucinations.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 import re
@@ -226,18 +227,32 @@ async def extract_evidence_from_page(
     user_prompt = f"Sub-question: {sub_question_text}\n\nDocument:\n{wrapped_doc}"
 
     try:
-        extraction = await call_json(
-            tier="small",
-            system=system_prompt,
-            user=user_prompt,
-            schema=EvidenceExtraction,
-            settings=settings,
-            budget=budget,
-            temperature=0.0,
-            span_name="extract_evidence",
+        extraction = await asyncio.wait_for(
+            call_json(
+                tier="small",
+                system=system_prompt,
+                user=user_prompt,
+                schema=EvidenceExtraction,
+                settings=settings,
+                budget=budget,
+                temperature=0.0,
+                max_tokens=settings.MAX_TOKENS_EXTRACTION,
+                span_name="extract_evidence",
+            ),
+            timeout=float(settings.PAGE_EXTRACTION_TIMEOUT_S),
         )
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning(
+            "Evidence extraction timed out (%ds) for %s; skipping page",
+            settings.PAGE_EXTRACTION_TIMEOUT_S,
+            url,
+        )
+        return []
     except (LLMOutputError, Exception) as exc:
         logger.warning("Evidence extraction LLM failed for %s: %s", url, exc)
+        return []
+
+    if extraction is None or not hasattr(extraction, "items"):
         return []
 
     added: list[Evidence] = []
