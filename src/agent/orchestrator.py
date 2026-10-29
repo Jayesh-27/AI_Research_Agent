@@ -88,6 +88,11 @@ def _build_run_stats(state: RunState, latency_s: float | None = None) -> RunStat
     }
 
     clean_warnings = [str(w).strip() for w in state.warnings if str(w).strip()]
+    if hasattr(state, "budget") and hasattr(state.budget, "warnings"):
+        for bw in state.budget.warnings:
+            bw_clean = str(bw).strip()
+            if bw_clean and bw_clean not in clean_warnings:
+                clean_warnings.append(bw_clean)
     fallbacks = list(state.fallbacks_used)
     for s in state.trace.spans:
         if s.name.endswith("_fallback") and s.name not in fallbacks:

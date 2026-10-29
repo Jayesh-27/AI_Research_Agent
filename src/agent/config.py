@@ -130,6 +130,7 @@ class Budget:
         self.fetches: int = 0
         self.llm_calls: int = 0
         self.replans: int = 0
+        self.warnings: list[str] = []
 
     # --- Consumption helpers ---
 
