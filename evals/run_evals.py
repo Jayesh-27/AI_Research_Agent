@@ -117,6 +117,7 @@ async def evaluate_query(
             "injection_followed": injection_followed,
             "injection_quarantined": not injection_followed,
         },
+        "warnings": agent_res.stats.warnings if agent_res.stats else [],
         "short_answer": (
             agent_res.short_answer[:150] + "..."
             if len(agent_res.short_answer) > 150
@@ -311,9 +312,17 @@ async def main() -> None:
     """Execute evaluation harness over queries.yaml."""
     parser = argparse.ArgumentParser(description="Run evaluation harness on benchmark queries")
     parser.add_argument("--routing", choices=["hybrid", "all-large", "both"], default="hybrid")
-    parser.add_argument("--queries", type=str, default="", help="Comma-separated query IDs to run")
+    parser.add_argument(
+        "--only",
+        "--queries",
+        dest="only",
+        type=str,
+        default="",
+        help="Comma-separated query IDs to run (e.g. 1,2,3,7,8,9)",
+    )
     parser.add_argument("--skip-baseline", action="store_true", help="Skip running non-agentic baseline")
     parser.add_argument("--update-docs", action="store_true", help="Automatically regenerate EVALUATION.md")
+    parser.add_argument("--pause", type=float, default=5.0, help="Pause seconds between queries")
     args = parser.parse_args()
 
     _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -325,8 +334,8 @@ async def main() -> None:
     queries_data = yaml.safe_load(_QUERIES_FILE.read_text(encoding="utf-8"))
     query_list = queries_data.get("queries", [])
 
-    if args.queries:
-        selected_ids = {int(x.strip()) for x in args.queries.split(",") if x.strip()}
+    if args.only:
+        selected_ids = {int(x.strip()) for x in args.only.split(",") if x.strip()}
         query_list = [q for q in query_list if q.get("id") in selected_ids]
 
     settings = Settings()
@@ -336,16 +345,35 @@ async def main() -> None:
     results = []
     logger.info("Starting benchmark evaluation of %d queries (routing=%s)...", len(query_list), args.routing)
 
+    from agent.llm import is_groq_daily_token_limit
+
+    stopped_due_to_tpd = False
     for q in query_list:
         try:
             res = await evaluate_query(q, settings, skip_baseline=args.skip_baseline)
             results.append(res)
+
+            # Check if tokens-per-day 429 was reported in warnings
+            agent_metrics = res.get("agent", {})
+            warns = agent_metrics.get("warnings", [])
+            if any("tokens per day" in str(w).lower() or "daily token limit" in str(w).lower() for w in warns):
+                logger.error("STOPPING IMMEDIATELY: Groq tokens-per-day (TPD) 429 detected during Query #%d", q.get("id"))
+                stopped_due_to_tpd = True
+                break
+
         except Exception as e:
             logger.error("Error evaluating query #%d: %s", q.get("id"), e)
             results.append({"id": q.get("id"), "error": str(e)})
+            if is_groq_daily_token_limit(e):
+                logger.error("STOPPING IMMEDIATELY: Groq tokens-per-day (TPD) 429 detected during Query #%d", q.get("id"))
+                stopped_due_to_tpd = True
+                break
 
-        # Brief pause between queries to respect Groq rate limits
-        await asyncio.sleep(2)
+        # Pause between queries (default 5s) to respect Groq TPM rate limits
+        await asyncio.sleep(args.pause)
+
+    if stopped_due_to_tpd:
+        logger.warning("Evaluation terminated early due to daily token quota exhaustion.")
 
     # Optional routing comparison for queries 1-3 if routing is "both"
     routing_comparison = []
