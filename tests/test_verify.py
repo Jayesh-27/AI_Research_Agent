@@ -532,4 +532,85 @@ def test_confidence_cap_two_thirds_float_tolerance():
     assert not any("capped at medium" in r.lower() for r in final_ans.confidence.rationale)
 
 
+def test_github_source_scoring_by_path_and_authority_factor():
+    from agent.filtering import calculate_domain_score, score_github_url
+
+    # 1. Test official org repos score high (1.0)
+    assert score_github_url("https://github.com/milvus-io/milvus") == 1.0
+    assert score_github_url("https://github.com/qdrant/qdrant") == 1.0
+    assert score_github_url("https://github.com/weaviate/weaviate") == 1.0
+    assert score_github_url("https://github.com/facebook/react") == 1.0
+    assert calculate_domain_score("https://github.com/milvus-io/milvus") == 1.0
+
+    # 2. Test awesome-* lists, curated lists, and tutorials score low (0.30)
+    assert score_github_url("https://github.com/awesome-vectors/awesome-rag") == 0.30
+    assert score_github_url("https://github.com/sindresorhus/awesome-python") == 0.30
+    assert score_github_url("https://github.com/curated-ai/collection") == 0.30
+    assert score_github_url("https://github.com/developer/my-rag-tutorial") == 0.30
+    assert score_github_url("https://github.com/user/demo-project") == 0.30
+    assert calculate_domain_score("https://github.com/awesome-vectors/awesome-rag") == 0.30
+
+    # 3. Test standard repos without junk keywords score 0.70
+    assert score_github_url("https://github.com/someuser/unrelated-custom-tool") == 0.70
+
+    # 4. Demonstrate effect on Authority Factor in FinalAnswer confidence
+    def make_final_answer_with_source(url: str, title: str) -> FinalAnswer:
+        ledger = EvidenceLedger()
+        ledger.add_evidence(
+            sub_question_id="sq1",
+            claim="Claim",
+            quote="Verified quote text",
+            url=url,
+            title=title,
+            document_text="Verified quote text in doc",
+        )
+        plan = Plan(
+            task_type=TaskType.survey,
+            interpretation="Test",
+            sub_questions=[
+                SubQuestion(
+                    id="sq1",
+                    question="Q1",
+                    rationale="r1",
+                    tools=[ToolName.web_search],
+                    search_queries=["q1"],
+                )
+            ],
+        )
+        synthesis = SynthesisOutput(
+            short_answer="Answer",
+            key_findings=[KeyFinding(statement="F1", evidence_ids=["e1"])],
+            assumptions=[],
+            limitations=[],
+            next_steps=[],
+            self_reported_confidence="high",
+        )
+        return verify_and_construct_final_answer(
+            question="Test",
+            plan=plan,
+            synthesis=synthesis,
+            ledger=ledger,
+            stats=RunStats(run_id="test-auth"),
+        )
+
+    ans_official = make_final_answer_with_source(
+        "https://github.com/milvus-io/milvus", "Milvus Official"
+    )
+    ans_awesome = make_final_answer_with_source(
+        "https://github.com/awesome-vectors/awesome-rag", "Awesome RAG"
+    )
+
+    # Check authority factor rationale
+    auth_official = [r for r in ans_official.confidence.rationale if "Source authority:" in r][0]
+    auth_awesome = [r for r in ans_awesome.confidence.rationale if "Source authority:" in r][0]
+
+    assert "Source authority: 1.00 (weight: 30%)" in auth_official
+    assert "Source authority: 0.30 (weight: 30%)" in auth_awesome
+
+    # Mathematical delta in confidence score is exactly 30% * (1.00 - 0.30) = 0.21
+    delta = ans_official.confidence.score - ans_awesome.confidence.score
+    assert abs(delta - 0.21) < 1e-4
+
+
+
 

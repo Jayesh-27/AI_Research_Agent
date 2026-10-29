@@ -10,6 +10,7 @@ Provides:
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -23,7 +24,6 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 # Known high-reputation domains & suffixes
 _BOOSTED_DOMAINS = {
-    "github.com",
     "docs.python.org",
     "developer.mozilla.org",
     "arxiv.org",
@@ -75,6 +75,137 @@ def get_domain(url: str) -> str:
         return ""
 
 
+_JUNK_REPO_KEYWORDS = {
+    "awesome",
+    "curated",
+    "tutorial",
+    "tutorials",
+    "demo",
+    "demos",
+    "example",
+    "examples",
+    "sample",
+    "samples",
+    "course",
+    "workshop",
+    "cookbook",
+    "handbook",
+    "cheatsheet",
+    "cheat-sheet",
+    "stars",
+    "collection",
+    "list",
+    "lists",
+}
+
+_KNOWN_OFFICIAL_ORGS = {
+    "google",
+    "meta",
+    "facebook",
+    "microsoft",
+    "apple",
+    "apache",
+    "openai",
+    "anthropic",
+    "amazon",
+    "aws",
+    "docker",
+    "vercel",
+    "cloudflare",
+    "elastic",
+    "redis",
+    "qdrant",
+    "milvus-io",
+    "weaviate",
+    "pinecone-io",
+    "chroma-core",
+    "langchain-ai",
+    "huggingface",
+    "pytorch",
+    "tensorflow",
+    "kubernetes",
+    "pallets",
+    "psf",
+    "python",
+    "golang",
+    "rust-lang",
+    "torvalds",
+}
+
+
+def score_github_url(url: str) -> float:
+    """Score GitHub sources deterministically based on repo path.
+
+    - Low quality (0.30): 'awesome-*' lists, curated lists, tutorials, demos, examples.
+    - High quality (1.00): Official organization / primary project repositories.
+    - Normal quality (0.70): Standard open-source repositories without junk keywords.
+    """
+    try:
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+        if not path:
+            return 0.5
+
+        parts = [p.lower() for p in path.split("/") if p]
+        if not parts:
+            return 0.5
+
+        # Check for non-repo GitHub subpaths
+        if parts[0] in {
+            "features",
+            "topics",
+            "collections",
+            "trending",
+            "site",
+            "orgs",
+            "blog",
+            "pricing",
+            "about",
+            "search",
+            "explore",
+        }:
+            return 0.5
+
+        owner = parts[0]
+        repo = parts[1] if len(parts) > 1 else ""
+
+        # Check for low-quality keywords in owner, repo, or path segments
+        all_tokens = set(re.findall(r"[a-z0-9]+", path.lower()))
+        if any(kw in all_tokens for kw in _JUNK_REPO_KEYWORDS) or repo.startswith("awesome"):
+            return 0.30
+
+        # If only owner is specified and matches known org
+        if not repo:
+            if owner in _KNOWN_OFFICIAL_ORGS:
+                return 1.0
+            return 0.5
+
+        # Check for official org repository
+        clean_owner = re.sub(
+            r"[-_](io|ai|core|org|project|dev|official|hq|inc|corp|labs?|software|tech|team)$",
+            "",
+            owner,
+        )
+        clean_repo = re.sub(
+            r"[-_](io|ai|core|org|project|dev|official|hq|inc|corp|labs?|software|tech|team)$",
+            "",
+            repo,
+        )
+
+        if (
+            owner == repo
+            or clean_owner == clean_repo
+            or clean_repo in clean_owner
+            or clean_owner in clean_repo
+            or owner in _KNOWN_OFFICIAL_ORGS
+        ):
+            return 1.0
+
+        return 0.70
+    except Exception:
+        return 0.5
+
+
 def calculate_domain_score(url: str) -> float:
     """Calculate a deterministic 0-1 quality score for a source domain."""
     domain = get_domain(url)
@@ -85,6 +216,10 @@ def calculate_domain_score(url: str) -> float:
     for bad in _PENALIZED_DOMAINS:
         if domain == bad or domain.endswith("." + bad):
             return 0.2
+
+    # Check GitHub repo scoring by path
+    if domain == "github.com" or domain.endswith(".github.com"):
+        return score_github_url(url)
 
     # Check exact boost
     for good in _BOOSTED_DOMAINS:
