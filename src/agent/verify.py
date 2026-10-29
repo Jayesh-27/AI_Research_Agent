@@ -273,6 +273,19 @@ def _compute_confidence(
         score -= 0.15
         rationale.append("Penalty (-0.15): search or provider fallback was used")
 
+    # Check for LLM step degradation penalty
+    degraded_llm_warnings = [
+        w
+        for w in stats.warnings
+        if "degraded" in w.lower() or "defaulted scores" in w.lower() or "defaulting scores" in w.lower()
+    ]
+    if degraded_llm_warnings:
+        degraded_penalty = 0.10
+        score -= degraded_penalty
+        rationale.append(
+            f"Penalty (-{degraded_penalty:.2f}): LLM step degraded ({len(degraded_llm_warnings)} warning(s))"
+        )
+
     # Check for low-trust sources cited
     low_trust_count = sum(1 for ev in ledger.all() if ev.trust == "low")
     if low_trust_count > 0:

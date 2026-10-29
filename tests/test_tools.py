@@ -6,6 +6,8 @@ import pytest
 
 from agent.config import Budget, Settings
 from agent.executor import filter_and_rank_github_candidates
+from agent.filtering import filter_and_rank_hits
+from agent.schemas import SearchHit
 from agent.tools.base import ToolResult, tool_call
 from agent.tools.fetch_page import fetch_page
 from agent.tools.github_stats import github_repo_stats
@@ -159,4 +161,27 @@ async def test_ddg_fallback_retries_with_alt_backend(monkeypatch):
     assert res.data[0]["url"] == "https://example.com/test"
     # Verify retry occurred with alternative backend and simplified query
     assert any(backend in ("duckduckgo", "html", "brave") for _, backend in calls)
+
+
+@pytest.mark.asyncio
+async def test_relevance_scoring_degradation_records_warning(monkeypatch):
+    settings = Settings()
+    budget = Budget(settings)
+
+    async def mock_call_json(*args, **kwargs):
+        raise RuntimeError("Simulated 429 rate limit")
+
+    monkeypatch.setattr("agent.filtering.call_json", mock_call_json)
+
+    hits = [
+        SearchHit(url="https://example.com/1", title="Hit 1", snippet="Snippet 1"),
+        SearchHit(url="https://example.com/2", title="Hit 2", snippet="Snippet 2"),
+    ]
+
+    ranked = await filter_and_rank_hits(hits, "test question", settings=settings, budget=budget)
+    # Defaulted to 2, so results are kept
+    assert len(ranked) == 2
+    # Warning is recorded in budget
+    assert any("Relevance scoring degraded" in w for w in budget.warnings)
+
 

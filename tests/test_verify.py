@@ -404,3 +404,72 @@ def test_render_markdown_numbering_and_clean_lists():
     assert "- Limitation 6" in md
     assert "- Limitation 7" not in md
 
+
+def test_llm_step_degradation_adds_warning_and_penalty():
+    ledger = EvidenceLedger()
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim A",
+        quote="Quote A",
+        url="https://site-a.com/doc",
+        title="Site A",
+        document_text="Quote A",
+    )
+    ledger.add_evidence(
+        sub_question_id="sq1",
+        claim="Claim B",
+        quote="Quote B",
+        url="https://site-b.com/doc",
+        title="Site B",
+        document_text="Quote B",
+    )
+    plan = Plan(
+        task_type=TaskType.survey,
+        interpretation="Investigate",
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="Q1",
+                rationale="r1",
+                tools=[ToolName.web_search],
+                search_queries=["q1"],
+            )
+        ],
+    )
+    synthesis = SynthesisOutput(
+        short_answer="Valid answer",
+        key_findings=[KeyFinding(statement="Finding 1", evidence_ids=["e1"])],
+        assumptions=[],
+        limitations=[],
+        next_steps=[],
+        self_reported_confidence="high",
+    )
+    degrade_warn = "Relevance scoring degraded: LLM call failed (RateLimitError), defaulted scores to 2."
+    stats_degraded = RunStats(
+        run_id="test-degraded",
+        warnings=[degrade_warn],
+    )
+    stats_clean = RunStats(run_id="test-clean")
+
+    ans_degraded = verify_and_construct_final_answer(
+        question="Test query",
+        plan=plan,
+        synthesis=synthesis,
+        ledger=ledger,
+        stats=stats_degraded,
+    )
+    ans_clean = verify_and_construct_final_answer(
+        question="Test query",
+        plan=plan,
+        synthesis=synthesis,
+        ledger=ledger,
+        stats=stats_clean,
+    )
+
+    # 1. Degradation warning is in limitations
+    assert any("Relevance scoring degraded" in lim for lim in ans_degraded.limitations)
+    # 2. Confidence penalty is applied (-0.10)
+    assert ans_degraded.confidence.score < ans_clean.confidence.score
+    assert any("Penalty (-0.10): LLM step degraded" in r for r in ans_degraded.confidence.rationale)
+
+

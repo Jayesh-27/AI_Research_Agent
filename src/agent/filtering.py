@@ -176,7 +176,11 @@ async def filter_and_rank_hits(
         for item in batch.scores:
             relevance_map[item.url] = item.score
     except (LLMOutputError, Exception) as exc:
-        logger.warning("Relevance scoring LLM failed (%s), defaulting scores to 2", exc)
+        warn_msg = f"Relevance scoring degraded: LLM call failed ({type(exc).__name__}: {exc}), defaulted scores to 2."
+        logger.warning(warn_msg)
+        if budget is not None and hasattr(budget, "warnings"):
+            if warn_msg not in budget.warnings:
+                budget.warnings.append(warn_msg)
         for h in deduped:
             relevance_map[h.url] = 2
 
