@@ -88,20 +88,18 @@ We evaluate system behavior across five core dimensions:
 
 ## 5. Model-Tier Routing Comparison (All-Large vs. Hybrid SLM+LLM)
 
-*Measured comparative benchmark for Queries #1–#3 under commit `31c1fe6` comparing All-Large (`gpt-oss-120b` across all stages) against Hybrid (`gpt-oss-20b` for filtering/extraction and `120b` for planning/synthesis):*
+*Results from the original results file (`eval_results_20261029_070726.json`) for Queries #1–#3, labelled **Run A, degraded environment (no Tavily, quota-limited)**:*
 
-| # | Query | Routing Mode | Status | Latency (s) | Cost ($) | Confidence |
-|---|---|---|---|---|---|---|
-| **1** | Compare the top 3 open-source vector databases for a startup building RAG products | all-large | `partial` | 93.2s | $0.0081 | 0.73 |
-| **1** | Compare the top 3 open-source vector databases for a startup building RAG products | hybrid (Run B) | `partial` | **14.8s** | **$0.0027** | **0.70** |
-| **2** | Find 5 Indian B2B SaaS startups in HR tech and summarize their positioning | all-large | `failed` | 75.0s | $0.0047 | 0.00 |
-| **2** | Find 5 Indian B2B SaaS startups in HR tech and summarize their positioning | hybrid (Run A) | `failed` | 64.7s | $0.0025 | 0.00 |
-| **3** | Research the pros and cons of using a multi-agent architecture for customer support automation | all-large | `partial` | 97.5s | $0.0060 | 0.72 |
-| **3** | Research the pros and cons of using a multi-agent architecture for customer support automation | hybrid (Run A) | `partial` | 79.4s | $0.0047 | 0.57 |
+| # | Query | Routing Mode | Environment | Status | Latency (s) | Cost ($) | Confidence |
+|:---:|---|:---:|---|:---:|:---:|:---:|:---:|
+| **1** | Compare the top 3 open-source vector databases for a startup building RAG products | all-large | Run A, degraded environment (no Tavily, quota-limited) | `partial` | 93.25s | $0.0081 | 0.728 |
+| **1** | Compare the top 3 open-source vector databases for a startup building RAG products | hybrid | Run A, degraded environment (no Tavily, quota-limited) | `failed` | 52.80s | $0.0026 | 0.000 |
+| **2** | Find 5 Indian B2B SaaS startups in HR tech and summarize their positioning | all-large | Run A, degraded environment (no Tavily, quota-limited) | `failed` | 75.02s | $0.0047 | 0.000 |
+| **2** | Find 5 Indian B2B SaaS startups in HR tech and summarize their positioning | hybrid | Run A, degraded environment (no Tavily, quota-limited) | `failed` | 64.69s | $0.0025 | 0.000 |
+| **3** | Research the pros and cons of using a multi-agent architecture for customer support automation | all-large | Run A, degraded environment (no Tavily, quota-limited) | `partial` | 97.52s | $0.0060 | 0.720 |
+| **3** | Research the pros and cons of using a multi-agent architecture for customer support automation | hybrid | Run A, degraded environment (no Tavily, quota-limited) | `partial` | 79.42s | $0.0047 | 0.570 |
 
-**Architectural Takeaways:**
-- **Cost Reduction:** Hybrid routing reduced per-query LLM costs by **53%–67%** (Query 1: $0.0027 vs $0.0081).
-- **Latency Advantage:** Under healthy Tavily networking (Run B), Hybrid latency dropped to **14.8s**, compared to **93.2s** for All-Large.
+A fair hybrid-vs-all-large comparison under healthy conditions (Tavily on, quota available) was not completed because of the Groq free-tier daily token limit; this remains future work.
 
 ---
 
