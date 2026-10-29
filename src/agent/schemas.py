@@ -192,6 +192,7 @@ class RunStats(BaseModel):
     retries: int = 0
     fallbacks_used: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    unverified_quotes_dropped: int = 0
 
 
 class FinalAnswer(BaseModel):

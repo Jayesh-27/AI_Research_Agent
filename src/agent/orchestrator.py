@@ -98,6 +98,8 @@ def _build_run_stats(state: RunState, latency_s: float | None = None) -> RunStat
         if s.name.endswith("_fallback") and s.name not in fallbacks:
             fallbacks.append(s.name)
 
+    unverified_dropped = state.ledger.unverified_dropped_count if hasattr(state, "ledger") else 0
+
     return RunStats(
         run_id=state.trace.run_id,
         latency_s=round(latency_s, 2),
@@ -109,6 +111,7 @@ def _build_run_stats(state: RunState, latency_s: float | None = None) -> RunStat
         retries=total_retries,
         fallbacks_used=fallbacks,
         warnings=clean_warnings,
+        unverified_quotes_dropped=unverified_dropped,
     )
 
 
