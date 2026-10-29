@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 46 Passed](https://img.shields.io/badge/tests-46%20passed-brightgreen.svg)]()
+[![Tests: 53 Passed](https://img.shields.io/badge/tests-53%20passed-brightgreen.svg)]()
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 An observable, auditable, and production-minded agentic research engine built for the **Platform Engineering Internship assignment at Predixion AI**. The system decomposes open-ended research queries, orchestrates tools (web search, SSRF-guarded page extraction, and GitHub statistics), verifies all citations verbatim against source documents, enforces strict security boundaries against prompt injection, and reports deterministic confidence and operational telemetry.
@@ -213,7 +213,7 @@ research-agent/
 │       ├── web_search.py     # Tavily REST API with DuckDuckGo fallback
 │       ├── fetch_page.py     # httpx + trafilatura with SSRF protection
 │       └── github_stats.py   # GitHub REST API repository metadata
-├── tests/                    # 46 automated unit and integration tests
+├── tests/                    # 53 automated unit and integration tests
 │   ├── fixtures/             # HTML test fixtures including malicious payloads
 │   ├── test_schemas.py
 │   ├── test_safety.py
