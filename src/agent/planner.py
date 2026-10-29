@@ -7,6 +7,7 @@ Falls back to a safe default plan if the LLM output fails repeatedly.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from agent.config import Budget, Settings
@@ -23,6 +24,30 @@ def _load_prompt(name: str) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     return ""
+
+
+def sanitize_plan_queries(plan: Plan, question: str) -> Plan:
+    """Ensure search queries do not include unsolicited years unless present in user query."""
+    user_years = set(re.findall(r"\b(19\d\d|20\d\d)\b", question))
+    for sq in plan.sub_questions:
+        cleaned_queries: list[str] = []
+        for q in sq.search_queries:
+            query_years = set(re.findall(r"\b(19\d\d|20\d\d)\b", q))
+            unsolicited = query_years - user_years
+            if unsolicited:
+                # Remove unsolicited years and collapse multiple spaces
+                cleaned = re.sub(
+                    r"\b(19\d\d|20\d\d)\b",
+                    lambda m: "" if m.group(0) in unsolicited else m.group(0),
+                    q,
+                )
+                cleaned = re.sub(r"\s+", " ", cleaned).strip()
+                if cleaned:
+                    cleaned_queries.append(cleaned)
+            else:
+                cleaned_queries.append(q)
+        sq.search_queries = cleaned_queries
+    return plan
 
 
 async def create_plan(
@@ -58,10 +83,10 @@ async def create_plan(
             max_tokens=settings.MAX_TOKENS_PLAN,
             span_name="plan_generation",
         )
-        return plan
+        return sanitize_plan_queries(plan, question)
     except (LLMOutputError, Exception) as exc:
         logger.warning("Planner LLM failed (%s), using fallback default plan", exc)
-        return _create_default_plan(question)
+        return sanitize_plan_queries(_create_default_plan(question), question)
 
 
 def _create_default_plan(question: str) -> Plan:

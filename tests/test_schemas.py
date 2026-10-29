@@ -168,3 +168,71 @@ def test_synthesis_output_drops_empty_evidence_ids_finding():
     assert len(s.key_findings) == 1
     assert s.key_findings[0].statement == "Valid finding"
     assert s.assumptions == ["assumption 1"]
+
+
+def test_planner_prompt_and_year_sanitization():
+    from pathlib import Path
+
+    from agent.planner import sanitize_plan_queries
+
+    # 1. Verify planner system prompt explicitly forbids unsolicited years
+    prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "planner.md"
+    assert prompt_path.exists()
+    content = prompt_path.read_text(encoding="utf-8")
+    assert "Do NOT put years" in content
+    assert "unless the user explicitly included a year" in content
+
+    # 2. When user query has NO year, unsolicited years are stripped
+    plan_no_year = Plan(
+        task_type=TaskType.comparison,
+        interpretation="Compare",
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="Q1",
+                rationale="r1",
+                tools=[ToolName.web_search],
+                search_queries=[
+                    "qdrant vs pinecone 2024",
+                    "hybrid search benchmarks 2025",
+                    "qdrant rust architecture",
+                ],
+            )
+        ],
+    )
+    cleaned = sanitize_plan_queries(
+        plan_no_year, "Compare Qdrant vs Pinecone for hybrid search"
+    )
+    assert cleaned.sub_questions[0].search_queries == [
+        "qdrant vs pinecone",
+        "hybrid search benchmarks",
+        "qdrant rust architecture",
+    ]
+
+    # 3. When user query explicitly contains a year, that year is preserved
+    plan_with_year = Plan(
+        task_type=TaskType.survey,
+        interpretation="Survey 2023 models",
+        sub_questions=[
+            SubQuestion(
+                id="sq1",
+                question="Q1",
+                rationale="r1",
+                tools=[ToolName.web_search],
+                search_queries=[
+                    "open source models 2023",
+                    "llm benchmarks 2023",
+                    "unsolicited 2025 news",
+                ],
+            )
+        ],
+    )
+    cleaned_with_year = sanitize_plan_queries(
+        plan_with_year, "What were the best open source models in 2023?"
+    )
+    assert cleaned_with_year.sub_questions[0].search_queries == [
+        "open source models 2023",
+        "llm benchmarks 2023",
+        "unsolicited news",
+    ]
+
