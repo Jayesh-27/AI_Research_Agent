@@ -14,6 +14,7 @@ import logging
 import re
 
 from agent.config import Budget, Settings
+from agent.diagnostics import get_debug_collector
 from agent.evidence import EvidenceLedger, extract_evidence_from_page
 from agent.filtering import filter_and_rank_hits
 from agent.safety import scan_untrusted
@@ -76,6 +77,24 @@ async def execute_sub_question(
             top_k=1,
         )
 
+        collector = get_debug_collector()
+        if collector:
+            collector.record_sub_question_search(
+                sq_id=sub_q.id,
+                question=sub_q.question,
+                queries_run=queries,
+                hits_returned=len(all_hits),
+                hits_kept=[
+                    {
+                        "url": h.url,
+                        "title": h.title,
+                        "relevance_score": getattr(h, "relevance", None),
+                        "domain_score": getattr(h, "domain_score", None),
+                    }
+                    for h in filtered_hits
+                ],
+            )
+
         # 3. Fetch pages and extract evidence
         for hit in filtered_hits:
             fetch_res = await fetch_page(
@@ -84,6 +103,13 @@ async def execute_sub_question(
                 budget=budget,
                 chaos_mode=chaos_mode,
             )
+            if collector:
+                collector.record_page_fetch(
+                    sq_id=sub_q.id,
+                    url=hit.url,
+                    ok=fetch_res.ok,
+                    error=fetch_res.error,
+                )
             if not fetch_res.ok or not isinstance(fetch_res.data, dict):
                 logger.info("Failed to fetch %s: %s", hit.url, fetch_res.error)
                 continue
@@ -127,6 +153,20 @@ async def execute_sub_question(
                 budget=budget,
             )
 
+        if collector:
+            evs = [
+                {
+                    "id": ev.id,
+                    "sub_question_id": ev.sub_question_id,
+                    "claim": ev.claim,
+                    "quote": ev.quote[:100],
+                    "domain": ev.domain,
+                    "trust": ev.trust,
+                }
+                for ev in ledger.get_by_sub_question(sub_q.id)
+            ]
+            collector.finalize_sub_question_evidence(sub_q.id, evs)
+
 
 async def _execute_github_stats_if_present(
     sub_q: SubQuestion,
@@ -158,10 +198,16 @@ async def _execute_github_stats_if_present(
     for m in _GITHUB_URL_PATTERN.finditer(sub_q.question):
         repos_found.add(m.group(1).rstrip(".git").strip("/"))
 
+    collector = get_debug_collector()
+    candidate_list = list(repos_found)
+    chosen_repos: list[str] = []
+    rejected_repos: list[dict[str, str]] = []
+
     # Limit to top 3 repos per sub-question
-    for repo in list(repos_found)[:3]:
+    for repo in candidate_list[:3]:
         res = await github_repo_stats(repo, settings=settings, budget=budget)
         if res.ok and isinstance(res.data, dict):
+            chosen_repos.append(repo)
             d = res.data
             summary = (
                 f"Repository {repo}: {d.get('stars', 0):,} stars, "
@@ -175,6 +221,18 @@ async def _execute_github_stats_if_present(
                 url=d.get("url", f"https://github.com/{repo}"),
                 title=f"{repo} GitHub Stats",
             )
+        else:
+            rejected_repos.append({"repo": repo, "reason": res.error or "fetch_failed"})
+
+    for repo in candidate_list[3:]:
+        rejected_repos.append({"repo": repo, "reason": "exceeded_max_repo_candidates_cap"})
+
+    if collector:
+        collector.record_github_decision(
+            candidates=candidate_list,
+            chosen=", ".join(chosen_repos) if chosen_repos else None,
+            rejected=rejected_repos,
+        )
 
 
 async def execute_plan(

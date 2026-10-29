@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable
 
 from agent.config import Budget, BudgetExceeded, Settings
+from agent.diagnostics import get_debug_collector
 from agent.evidence import EvidenceLedger
 from agent.executor import execute_plan, execute_sub_question
 from agent.planner import create_plan
@@ -135,13 +136,22 @@ async def _execute_pipeline(
     warnings: list[str] = []
     fallbacks_used: list[str] = []
 
+    collector = get_debug_collector()
+
     # 1. Planning Stage
+    stage_t0 = time.time()
     span = trace.start_span("orchestrator:plan")
     plan = await create_plan(question, settings=settings, budget=budget)
     # Ensure bounded execution within provider token rate limits
     if len(plan.sub_questions) > 3:
         plan.sub_questions = plan.sub_questions[:3]
     trace.end_span(span)
+    if collector:
+        collector.record_stage_timing(
+            "orchestrator:plan",
+            time.time() - stage_t0,
+            max(0.0, float(settings.RUN_TIMEOUT_S) - (time.time() - start_time)),
+        )
 
     if on_plan_callback:
         on_plan_callback(plan)
@@ -156,6 +166,7 @@ async def _execute_pipeline(
         )
 
     # 2. Sub-question Execution Stage
+    stage_t0 = time.time()
     ledger = EvidenceLedger()
     span = trace.start_span("orchestrator:execute_plan")
     await execute_plan(
@@ -166,8 +177,15 @@ async def _execute_pipeline(
         chaos_mode=active_chaos,
     )
     trace.end_span(span)
+    if collector:
+        collector.record_stage_timing(
+            "orchestrator:execute_plan",
+            time.time() - stage_t0,
+            max(0.0, float(settings.RUN_TIMEOUT_S) - (time.time() - start_time)),
+        )
 
     # 3. Coverage Check & Replan Stage (bounded to max_replans)
+    stage_t0 = time.time()
     if budget.replans < settings.MAX_REPLANS:
         gappy_questions: list[SubQuestion] = []
         for sq in plan.sub_questions:
@@ -197,8 +215,15 @@ async def _execute_pipeline(
             ]
             await asyncio.gather(*replan_tasks, return_exceptions=True)
             trace.end_span(span_replan)
+    if collector:
+        collector.record_stage_timing(
+            "orchestrator:replan_pass",
+            time.time() - stage_t0,
+            max(0.0, float(settings.RUN_TIMEOUT_S) - (time.time() - start_time)),
+        )
 
     # 4. Synthesis Stage
+    stage_t0 = time.time()
     span = trace.start_span("orchestrator:synthesize")
     synthesis_output = await synthesize_answer(
         question,
@@ -208,6 +233,12 @@ async def _execute_pipeline(
         budget=budget,
     )
     trace.end_span(span)
+    if collector:
+        collector.record_stage_timing(
+            "orchestrator:synthesize",
+            time.time() - stage_t0,
+            max(0.0, float(settings.RUN_TIMEOUT_S) - (time.time() - start_time)),
+        )
 
     # 5. Operational Telemetry Calculation
     latency = time.time() - start_time

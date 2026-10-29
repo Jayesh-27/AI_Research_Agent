@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 import typer
@@ -19,6 +20,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.config import Settings
+from agent.diagnostics import (
+    DebugCollector,
+    check_model_availability,
+    set_debug_collector,
+)
 from agent.orchestrator import run_research
 from agent.render import render_markdown
 from agent.schemas import FinalAnswer, Plan
@@ -53,6 +59,9 @@ def ask(
     show_trace: bool = typer.Option(
         False, "--show-trace", help="Display execution span trace timeline"
     ),
+    debug: bool = typer.Option(
+        False, "--debug", help="Enable fine-grained diagnostics tables and save debug JSON"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose info logging"),
 ) -> None:
     """Investigate a research question using planning, tool execution, and synthesis."""
@@ -60,6 +69,12 @@ def ask(
         logging.getLogger("agent").setLevel(logging.INFO)
 
     settings = Settings()
+    is_debug = debug or settings.AGENT_DEBUG or os.environ.get("AGENT_DEBUG") == "1"
+    debug_collector = None
+    if is_debug:
+        debug_collector = DebugCollector(run_id="init", settings=settings)
+        debug_collector.model_availability = check_model_availability(settings)
+        set_debug_collector(debug_collector)
 
     def plan_callback(plan: Plan) -> None:
         if show_plan:
@@ -119,6 +134,14 @@ def ask(
                 table.add_row(span.name, f"{span.duration_ms:.1f}", ", ".join(details), status_str)
 
             console.print(table)
+
+    # Show and save debug diagnostics if enabled
+    if debug_collector:
+        run_id = final_answer.stats.run_id if final_answer.stats else "debug"
+        debug_collector.run_id = run_id
+        saved_debug_path = debug_collector.save_to_disk()
+        debug_collector.print_rich_tables(console)
+        console.print(f"[bold cyan]Debug telemetry saved to:[/bold cyan] {saved_debug_path}")
 
     # Save to disk if requested
     if save:
@@ -198,6 +221,24 @@ def baseline(
 
     with console.status("[bold yellow]Running baseline single-prompt LLM...", spinner="dots"):
         asyncio.run(_run())
+
+
+@app.command()
+def diagnose() -> None:
+    """Run deep diagnostics on configuration, connectivity, and model availability."""
+    settings = Settings()
+    collector = DebugCollector(run_id="diagnose", settings=settings)
+    avail = check_model_availability(settings)
+    collector.model_availability = avail
+    out_file = collector.save_to_disk()
+    collector.print_rich_tables(console)
+    console.print(f"\n[bold cyan]Diagnostic output saved to:[/bold cyan] {out_file}\n")
+    if not avail.get("ok"):
+        console.print(f"[bold red]Provider error:[/bold red] {avail.get('error')}")
+    elif not avail.get("small_model_available") or not avail.get("large_model_available"):
+        console.print("[bold yellow]Warning:[/bold yellow] One or more configured models are not listed by provider.")
+    else:
+        console.print("[bold green]All systems operational.[/bold green]")
 
 
 @app.command()

@@ -15,6 +15,7 @@ from typing import Any, Literal, TypeVar
 import openai
 from pydantic import BaseModel, ValidationError
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -22,6 +23,7 @@ from tenacity import (
 )
 
 from agent.config import MODEL_PRICING, Budget, ModelSpec, Settings
+from agent.diagnostics import get_debug_collector
 from agent.tracing import get_current_trace
 
 logger = logging.getLogger(__name__)
@@ -147,6 +149,24 @@ async def call_json(
     return result
 
 
+def _before_sleep_callback(retry_state: RetryCallState) -> None:
+    """Record retry attempts, status codes, and backoff sleep times for diagnostics."""
+    telemetry = retry_state.kwargs.get("call_telemetry")
+    if telemetry is not None:
+        telemetry["retries"] += 1
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        status = getattr(exc, "status_code", None)
+        if status is None and hasattr(exc, "response") and exc.response:
+            status = getattr(exc.response, "status_code", None)
+        sleep_s = retry_state.next_action.sleep if retry_state.next_action else 0.0
+        telemetry["failed_attempts"].append({
+            "attempt": retry_state.attempt_number,
+            "status_code": status,
+            "error": str(exc),
+        })
+        telemetry["backoff_sleeps"].append(sleep_s)
+
+
 async def _call_with_retry_and_fallback(
     *,
     spec: ModelSpec,
@@ -160,6 +180,11 @@ async def _call_with_retry_and_fallback(
     span_name: str,
 ) -> T:
     """Try primary provider with retries, then fallback if available."""
+    call_telemetry: dict[str, Any] = {
+        "retries": 0,
+        "failed_attempts": [],
+        "backoff_sleeps": [],
+    }
     try:
         return await _call_primary(
             spec=spec,
@@ -170,6 +195,7 @@ async def _call_with_retry_and_fallback(
             temperature=temperature,
             max_tokens=max_tokens,
             span_name=span_name,
+            call_telemetry=call_telemetry,
         )
     except (openai.RateLimitError, openai.APIStatusError, LLMOutputError) as exc:
         # Try fallback provider if configured
@@ -195,6 +221,7 @@ async def _call_with_retry_and_fallback(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 span_name=f"{span_name}_fallback",
+                call_telemetry=call_telemetry,
             )
         raise
 
@@ -205,6 +232,7 @@ async def _call_with_retry_and_fallback(
     ),
     stop=stop_after_attempt(3),
     wait=wait_exponential_jitter(initial=1, max=30, jitter=2),
+    before_sleep=_before_sleep_callback,
     reraise=True,
 )
 async def _call_primary(
@@ -217,6 +245,7 @@ async def _call_primary(
     temperature: float,
     max_tokens: int,
     span_name: str,
+    call_telemetry: dict[str, Any] | None = None,
 ) -> T:
     """Single-provider call with tenacity retries."""
     return await _call_once(
@@ -229,6 +258,7 @@ async def _call_primary(
         temperature=temperature,
         max_tokens=max_tokens,
         span_name=span_name,
+        call_telemetry=call_telemetry,
     )
 
 
@@ -243,6 +273,7 @@ async def _call_once(
     temperature: float,
     max_tokens: int,
     span_name: str,
+    call_telemetry: dict[str, Any] | None = None,
 ) -> T:
     """Make a single LLM call, parse, optionally repair once."""
     client = _get_client(base_url, api_key)
@@ -270,11 +301,35 @@ async def _call_once(
         tokens_in = response.usage.prompt_tokens if response.usage else 0
         tokens_out = response.usage.completion_tokens if response.usage else 0
 
+        completion_details = getattr(response.usage, "completion_tokens_details", None)
+        reasoning_tokens = None
+        if completion_details is not None:
+            if hasattr(completion_details, "reasoning_tokens"):
+                reasoning_tokens = completion_details.reasoning_tokens
+            elif isinstance(completion_details, dict):
+                reasoning_tokens = completion_details.get("reasoning_tokens")
+        finish_reason = response.choices[0].finish_reason if response.choices else None
+
         if span:
             span.metadata["tokens_in"] = tokens_in
             span.metadata["tokens_out"] = tokens_out
             cost = (tokens_in * spec.price_in + tokens_out * spec.price_out) / 1_000_000
             span.metadata["est_cost_usd"] = cost
+
+        collector = get_debug_collector()
+        if collector:
+            collector.record_llm_call(
+                step_name=span_name,
+                model=spec.model_id,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                reasoning_tokens=reasoning_tokens,
+                finish_reason=finish_reason,
+                latency_ms=(time.time() - start) * 1000,
+                retries=call_telemetry.get("retries", 0) if call_telemetry else 0,
+                failed_attempts=call_telemetry.get("failed_attempts", []) if call_telemetry else [],
+                backoff_sleeps=call_telemetry.get("backoff_sleeps", []) if call_telemetry else [],
+            )
 
         # Parse and validate
         try:
@@ -282,6 +337,8 @@ async def _call_once(
             return schema.model_validate(data)
         except (json.JSONDecodeError, ValidationError) as parse_err:
             logger.warning("LLM output parse failed for %s: %s", span_name, parse_err)
+            if collector:
+                collector.record_parse_failure(span_name, raw, str(parse_err))
             # One repair attempt
             return await _repair_once(
                 client=client,

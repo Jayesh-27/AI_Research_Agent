@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
+from agent.diagnostics import get_debug_collector
 from agent.evidence import EvidenceLedger
 from agent.filtering import calculate_domain_score
 from agent.schemas import (
@@ -147,13 +148,26 @@ def _compute_confidence(
     rationale.append(f"Source authority: {source_quality:.2f} (weight: 30%)")
 
     # Factor 2: Sub-question coverage (>=2 evidence from >=2 domains)
+    collector = get_debug_collector()
     covered_count = 0
     total_sq = len(plan.sub_questions) if plan.sub_questions else 1
     for sq in plan.sub_questions:
         evs = ledger.get_by_sub_question(sq.id)
         domains = {ev.domain for ev in evs if ev.domain}
-        if len(evs) >= 2 and len(domains) >= 2:
+        has_structured = any(ev.domain == "github.com" or "GitHub" in ev.title for ev in evs)
+        is_cov = len(evs) >= 2 and len(domains) >= 2
+        rule_desc = "n_evidence>=2 and n_domains>=2"
+        if is_cov:
             covered_count += 1
+        if collector:
+            collector.record_coverage_breakdown(
+                sq_id=sq.id,
+                n_evidence=len(evs),
+                n_domains=len(domains),
+                has_structured_api=has_structured,
+                is_covered=is_cov,
+                rule_applied=rule_desc,
+            )
     coverage = covered_count / total_sq
     rationale.append(
         f"Sub-question coverage: {coverage:.2f} ({covered_count}/{total_sq} covered, weight: 25%)"
@@ -203,14 +217,31 @@ def _compute_confidence(
     else:
         calc_level = "low"
 
+    caps_applied: list[str] = []
     # Rule: LLM can LOWER confidence, never raise it
     level_order = {"low": 1, "medium": 2, "high": 3}
     if level_order[llm_level] < level_order[calc_level]:
         final_level = llm_level
-        rationale.append(
-            f"Confidence lowered from {calc_level} to {llm_level} based on synthesizer self-assessment"
-        )
+        cap_msg = f"Confidence lowered from {calc_level} to {llm_level} based on synthesizer self-assessment"
+        caps_applied.append(cap_msg)
+        rationale.append(cap_msg)
     else:
         final_level = calc_level
+
+    if collector:
+        factors_dict = {
+            "source_authority": {"raw": source_quality, "weight": 0.30, "weighted": 0.30 * source_quality},
+            "subquestion_coverage": {"raw": coverage, "weight": 0.25, "weighted": 0.25 * coverage},
+            "quote_verification_rate": {"raw": verification_rate, "weight": 0.20, "weighted": 0.20 * verification_rate},
+            "source_consistency": {"raw": agreement, "weight": 0.15, "weighted": 0.15 * agreement},
+            "information_freshness": {"raw": freshness, "weight": 0.10, "weighted": 0.10 * freshness},
+        }
+        collector.record_confidence_breakdown(
+            factors=factors_dict,
+            penalties=[r for r in rationale if "Penalty" in r],
+            final_score=round(score, 4),
+            final_level=final_level,
+            caps_applied=caps_applied,
+        )
 
     return Confidence(level=final_level, score=round(score, 3), rationale=rationale), calc_level

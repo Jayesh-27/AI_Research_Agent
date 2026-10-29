@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     # --- Feature flags ---
     ENABLE_JUDGE: bool = False
     CHAOS_MODE: str = "off"  # off | search_down | timeout | malformed | injection | empty
+    AGENT_DEBUG: bool = False
 
 
 # ---------------------------------------------------------------------------
